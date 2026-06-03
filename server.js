@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 import db from './db/database.js';
 
 dotenv.config();
@@ -307,6 +308,87 @@ async function populateMissingCovers(books) {
   return books;
 }
 
+// Password hashing helpers
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return { salt, hash };
+}
+
+function verifyPassword(password, salt, storedHash) {
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return hash === storedHash;
+}
+
+// Authentication Middlewares
+function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  let token = '';
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  } else if (req.query.token) {
+    token = req.query.token;
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: '인증이 필요합니다. 로그인해 주세요.' });
+  }
+
+  db.get(
+    `SELECT s.user_id, u.nickname FROM sessions s 
+     JOIN users u ON s.user_id = u.id 
+     WHERE s.token = ? AND s.expires_at > datetime('now')`,
+    [token],
+    (err, session) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      if (!session) {
+        return res.status(401).json({ error: '유효하지 않거나 만료된 세션입니다. 다시 로그인해 주세요.' });
+      }
+      req.user = {
+        id: session.user_id,
+        nickname: session.nickname,
+        token: token
+      };
+      next();
+    }
+  );
+}
+
+function optionalAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  let token = '';
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7);
+  } else if (req.query.token) {
+    token = req.query.token;
+  }
+
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  db.get(
+    `SELECT s.user_id, u.nickname FROM sessions s 
+     JOIN users u ON s.user_id = u.id 
+     WHERE s.token = ? AND s.expires_at > datetime('now')`,
+    [token],
+    (err, session) => {
+      if (err || !session) {
+        req.user = null;
+      } else {
+        req.user = {
+          id: session.user_id,
+          nickname: session.nickname
+        };
+      }
+      next();
+    }
+  );
+}
+
 // API Endpoint: Get filters configuration
 app.get('/api/filters', (req, res) => {
   const queries = {
@@ -366,7 +448,7 @@ app.get('/api/filters', (req, res) => {
 });
 
 // API Endpoint: Paginated and filtered list of books
-app.get('/api/books', (req, res) => {
+app.get('/api/books', optionalAuth, (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
   const offset = (page - 1) * limit;
@@ -377,7 +459,10 @@ app.get('/api/books', (req, res) => {
   const subtype = req.query.subtype || '';
   const category = req.query.category || '';
 
-  let sql = 'SELECT * FROM books WHERE 1=1';
+  let sql = 'SELECT *, 0 as is_favorite FROM books WHERE 1=1';
+  if (req.user) {
+    sql = 'SELECT *, (SELECT 1 FROM favorites WHERE favorites.book_id = books.id AND favorites.user_id = ?) as is_favorite FROM books WHERE 1=1';
+  }
   let countSql = 'SELECT COUNT(*) as total FROM books WHERE 1=1';
   const params = [];
 
@@ -426,7 +511,7 @@ app.get('/api/books', (req, res) => {
 
   // Order alphabetically by title
   sql += ' ORDER BY title ASC LIMIT ? OFFSET ?';
-  const queryParams = [...params, limit, offset];
+  const queryParams = req.user ? [req.user.id, ...params, limit, offset] : [...params, limit, offset];
 
   db.serialize(() => {
     let totalCount = 0;
@@ -466,9 +551,15 @@ app.get('/api/books', (req, res) => {
 });
 
 // API Endpoint: Get book details by ID
-app.get('/api/books/:id', (req, res) => {
+app.get('/api/books/:id', optionalAuth, (req, res) => {
   const id = req.params.id;
-  db.get('SELECT * FROM books WHERE id = ?', [id], async (err, row) => {
+  let sql = 'SELECT *, 0 as is_favorite FROM books WHERE id = ?';
+  let queryParams = [id];
+  if (req.user) {
+    sql = 'SELECT *, (SELECT 1 FROM favorites WHERE favorites.book_id = books.id AND favorites.user_id = ?) as is_favorite FROM books WHERE id = ?';
+    queryParams = [req.user.id, id];
+  }
+  db.get(sql, queryParams, async (err, row) => {
     if (err) {
       return res.status(500).json({ error: err.message });
     }
@@ -513,7 +604,405 @@ app.get('/api/books/:id', (req, res) => {
     }
 
     res.json(row);
+});
+
+// ==========================================
+// AUTHENTICATION ENDPOINTS
+// ==========================================
+
+// Register User
+app.post('/api/auth/register', (req, res) => {
+  const { nickname, password } = req.body;
+  if (!nickname || !password) {
+    return res.status(400).json({ error: '별명과 비밀번호를 입력해 주세요.' });
+  }
+  
+  const cleanNickname = nickname.trim();
+  if (cleanNickname.length < 2 || cleanNickname.length > 15) {
+    return res.status(400).json({ error: '별명은 2자 이상 15자 이하여야 합니다.' });
+  }
+  if (password.length < 6) {
+    return res.status(400).json({ error: '비밀번호는 최소 6자 이상이어야 합니다.' });
+  }
+
+  // Check if nickname already exists
+  db.get('SELECT id FROM users WHERE nickname = ?', [cleanNickname], (err, row) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (row) {
+      return res.status(400).json({ error: '이미 사용 중인 별명입니다.' });
+    }
+
+    // Hash password
+    const { salt, hash } = hashPassword(password);
+
+    // Insert user
+    db.run(
+      'INSERT INTO users (nickname, password_hash, salt) VALUES (?, ?, ?)',
+      [cleanNickname, hash, salt],
+      function (insertErr) {
+        if (insertErr) {
+          return res.status(500).json({ error: insertErr.message });
+        }
+        const userId = this.lastID;
+        
+        // Auto-login: Create session token (expires in 30 days)
+        const token = crypto.randomBytes(32).toString('hex');
+        db.run(
+          `INSERT INTO sessions (token, user_id, expires_at) 
+           VALUES (?, ?, datetime('now', '+30 days'))`,
+          [token, userId],
+          (sessionErr) => {
+            if (sessionErr) {
+              return res.status(500).json({ error: sessionErr.message });
+            }
+            
+            // Create a default '미분류' folder for the user
+            db.run(
+              'INSERT INTO favorite_categories (user_id, name, sort_order) VALUES (?, ?, ?)',
+              [userId, '미분류', 0],
+              (catErr) => {
+                if (catErr) console.error('Failed to create default category:', catErr.message);
+                res.status(201).json({
+                  message: '회원가입이 완료되었습니다.',
+                  token,
+                  user: { id: userId, nickname: cleanNickname }
+                });
+              }
+            );
+          }
+        );
+      }
+    );
   });
+});
+
+// Login User
+app.post('/api/auth/login', (req, res) => {
+  const { nickname, password } = req.body;
+  if (!nickname || !password) {
+    return res.status(400).json({ error: '별명과 비밀번호를 입력해 주세요.' });
+  }
+
+  db.get('SELECT * FROM users WHERE nickname = ?', [nickname.trim()], (err, user) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    if (!user) {
+      return res.status(400).json({ error: '별명 또는 비밀번호가 올바르지 않습니다.' });
+    }
+
+    // Verify Password
+    const isValid = verifyPassword(password, user.salt, user.password_hash);
+    if (!isValid) {
+      return res.status(400).json({ error: '별명 또는 비밀번호가 올바르지 않습니다.' });
+    }
+
+    // Create session token
+    const token = crypto.randomBytes(32).toString('hex');
+    db.run(
+      `INSERT INTO sessions (token, user_id, expires_at) 
+       VALUES (?, ?, datetime('now', '+30 days'))`,
+      [token, user.id],
+      (sessionErr) => {
+        if (sessionErr) {
+          return res.status(500).json({ error: sessionErr.message });
+        }
+        res.json({
+          message: '로그인에 성공했습니다.',
+          token,
+          user: { id: user.id, nickname: user.nickname }
+        });
+      }
+    );
+  });
+});
+
+// Logout User
+app.post('/api/auth/logout', requireAuth, (req, res) => {
+  db.run('DELETE FROM sessions WHERE token = ?', [req.user.token], (err) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ message: '로그아웃 되었습니다.' });
+  });
+});
+
+// Get Current User
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  res.json({ user: req.user });
+});
+
+// ==========================================
+// FAVORITES FOLDERS ENDPOINTS
+// ==========================================
+
+// Get Favorite Categories (Folders)
+app.get('/api/favorites/folders', requireAuth, (req, res) => {
+  db.all(
+    'SELECT * FROM favorite_categories WHERE user_id = ? ORDER BY sort_order ASC, name ASC',
+    [req.user.id],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      res.json(rows);
+    }
+  );
+});
+
+// Create Favorite Category (Folder)
+app.post('/api/favorites/folders', requireAuth, (req, res) => {
+  const { name, parent_id } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: '폴더 이름을 입력해 주세요.' });
+  }
+
+  db.run(
+    'INSERT INTO favorite_categories (user_id, name, parent_id) VALUES (?, ?, ?)',
+    [req.user.id, name.trim(), parent_id || null],
+    function (err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      res.status(201).json({
+        id: this.lastID,
+        user_id: req.user.id,
+        name: name.trim(),
+        parent_id: parent_id || null,
+        sort_order: 0
+      });
+    }
+  );
+});
+
+// Rename/Update Favorite Category
+app.put('/api/favorites/folders/:id', requireAuth, (req, res) => {
+  const folderId = req.params.id;
+  const { name, parent_id, sort_order } = req.body;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: '폴더 이름을 입력해 주세요.' });
+  }
+
+  // Verify the folder belongs to user
+  db.get(
+    'SELECT id, name FROM favorite_categories WHERE id = ? AND user_id = ?',
+    [folderId, req.user.id],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!row) return res.status(404).json({ error: '폴더를 찾을 수 없거나 권한이 없습니다.' });
+
+      if (row.name === '미분류') {
+        return res.status(400).json({ error: '기본 폴더는 이름을 변경할 수 없습니다.' });
+      }
+
+      db.run(
+        `UPDATE favorite_categories 
+         SET name = ?, parent_id = ?, sort_order = ? 
+         WHERE id = ? AND user_id = ?`,
+        [name.trim(), parent_id || null, sort_order || 0, folderId, req.user.id],
+        (updateErr) => {
+          if (updateErr) return res.status(500).json({ error: updateErr.message });
+          res.json({ message: '폴더가 수정되었습니다.' });
+        }
+      );
+    }
+  );
+});
+
+// Delete Favorite Category
+app.delete('/api/favorites/folders/:id', requireAuth, (req, res) => {
+  const folderId = req.params.id;
+
+  // Verify the folder belongs to user
+  db.get(
+    'SELECT id, name FROM favorite_categories WHERE id = ? AND user_id = ?',
+    [folderId, req.user.id],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!row) return res.status(404).json({ error: '폴더를 찾을 수 없거나 권한이 없습니다.' });
+
+      if (row.name === '미분류') {
+        return res.status(400).json({ error: '기본 폴더는 삭제할 수 없습니다.' });
+      }
+
+      // We need to move all books under this folder to '미분류' folder
+      db.get(
+        "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '미분류'",
+        [req.user.id],
+        (defaultFolderErr, defaultFolder) => {
+          if (defaultFolderErr) return res.status(500).json({ error: defaultFolderErr.message });
+          
+          const targetCategoryId = defaultFolder ? defaultFolder.id : null;
+
+          db.serialize(() => {
+            // 1. Update books in this folder to be in target folder
+            db.run(
+              'UPDATE favorites SET category_id = ? WHERE user_id = ? AND category_id = ?',
+              [targetCategoryId, req.user.id, folderId]
+            );
+            
+            // 2. Update any subfolders to be root folders
+            db.run(
+              'UPDATE favorite_categories SET parent_id = NULL WHERE user_id = ? AND parent_id = ?',
+              [req.user.id, folderId]
+            );
+
+            // 3. Delete the category itself
+            db.run(
+              'DELETE FROM favorite_categories WHERE id = ? AND user_id = ?',
+              [folderId, req.user.id],
+              (deleteErr) => {
+                if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+                res.json({ message: '폴더가 삭제되었으며, 포함된 책들은 미분류로 이동되었습니다.' });
+              }
+            );
+          });
+        }
+      );
+    }
+  );
+});
+
+// ==========================================
+// FAVORITE BOOKS ENDPOINTS
+// ==========================================
+
+// Get Favorite Books
+app.get('/api/favorites', requireAuth, (req, res) => {
+  db.all(
+    `SELECT f.id as favorite_id, f.book_id, f.category_id, f.sort_order,
+            b.title, b.author, b.publisher, b.image_url, b.source_type, b.source_subtype
+     FROM favorites f
+     JOIN books b ON f.book_id = b.id
+     WHERE f.user_id = ?
+     ORDER BY f.category_id ASC, f.sort_order ASC, f.created_at DESC`,
+    [req.user.id],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      res.json(rows);
+    }
+  );
+});
+
+// Add Book to Favorites
+app.post('/api/favorites', requireAuth, (req, res) => {
+  const { book_id, category_id } = req.body;
+  if (!book_id) {
+    return res.status(400).json({ error: '도서 ID가 누락되었습니다.' });
+  }
+
+  const getCategoryAndInsert = () => {
+    if (category_id) {
+      db.get(
+        'SELECT id FROM favorite_categories WHERE id = ? AND user_id = ?',
+        [category_id, req.user.id],
+        (err, row) => {
+          if (err) return res.status(500).json({ error: err.message });
+          if (!row) return res.status(400).json({ error: '유효하지 않은 폴더입니다.' });
+          
+          insertFavorite(category_id);
+        }
+      );
+    } else {
+      db.get(
+        "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '미분류'",
+        [req.user.id],
+        (err, row) => {
+          if (err) return res.status(500).json({ error: err.message });
+          const defaultId = row ? row.id : null;
+          insertFavorite(defaultId);
+        }
+      );
+    }
+  };
+
+  const insertFavorite = (catId) => {
+    db.run(
+      `INSERT INTO favorites (user_id, book_id, category_id) 
+       VALUES (?, ?, ?)
+       ON CONFLICT(user_id, book_id) DO UPDATE SET category_id = excluded.category_id`,
+      [req.user.id, book_id, catId],
+      function (err) {
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
+        res.status(201).json({
+          message: '즐겨찾기에 추가되었습니다.',
+          id: this.lastID || null,
+          book_id,
+          category_id: catId
+        });
+      }
+    );
+  };
+
+  getCategoryAndInsert();
+});
+
+// Delete Book from Favorites (By Book ID)
+app.delete('/api/favorites/:bookId', requireAuth, (req, res) => {
+  const bookId = req.params.bookId;
+  db.run(
+    'DELETE FROM favorites WHERE user_id = ? AND book_id = ?',
+    [req.user.id, bookId],
+    function (err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ error: '즐겨찾기 항목을 찾을 수 없습니다.' });
+      }
+      res.json({ message: '즐겨찾기에서 제거되었습니다.' });
+    }
+  );
+});
+
+// Update Book's Category/Sort Order in Favorites
+app.put('/api/favorites/:bookId', requireAuth, (req, res) => {
+  const bookId = req.params.bookId;
+  const { category_id, sort_order } = req.body;
+
+  const updateFavorite = (catId) => {
+    db.run(
+      `UPDATE favorites 
+       SET category_id = ?, sort_order = ? 
+       WHERE user_id = ? AND book_id = ?`,
+      [catId, sort_order || 0, req.user.id, bookId],
+      function (err) {
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
+        res.json({ message: '즐겨찾기 정보가 수정되었습니다.' });
+      }
+    );
+  };
+
+  if (category_id) {
+    db.get(
+      'SELECT id FROM favorite_categories WHERE id = ? AND user_id = ?',
+      [category_id, req.user.id],
+      (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row) return res.status(400).json({ error: '유효하지 않은 폴더입니다.' });
+        updateFavorite(category_id);
+      }
+    );
+  } else {
+    db.get(
+      "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '미분류'",
+      [req.user.id],
+      (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const defaultId = row ? row.id : null;
+        updateFavorite(defaultId);
+      }
+    );
+  }
 });
 
 // Serve frontend html for all other routes

@@ -1,4 +1,3 @@
-// App State Management
 const state = {
   search: '',
   searchType: 'all',   // Search lookup type: 'all', 'title', 'author', 'publisher', 'isbn'
@@ -9,7 +8,13 @@ const state = {
   category: '',        // Selected KDC category (from top tabs)
   page: 1,
   limit: 15,
-  filters: null
+  filters: null,
+  // User Authentication & Favorites lists
+  user: null,
+  token: localStorage.getItem('auth_token') || '',
+  favorites: [],
+  folders: [],
+  readBooks: JSON.parse(localStorage.getItem('read_books') || '[]')
 };
 
 // DOM Elements
@@ -32,9 +37,27 @@ const btnResetHome = document.getElementById('btn-reset-home');
 const categoryTabsContainer = document.getElementById('category-tabs');
 const sourceOptionsList = document.getElementById('source-options-list');
 
+// Favorites Drawer DOM Elements
+const btnToggleFavoritesDrawer = document.getElementById('btn-toggle-favorites-drawer');
+const btnCloseDrawer = document.getElementById('btn-close-drawer');
+const favoritesDrawer = document.getElementById('favorites-drawer');
+const drawerUserInfo = document.getElementById('drawer-user-info');
+const drawerFavoritesContent = document.getElementById('drawer-favorites-content');
+const favoritesTreeContainer = document.getElementById('favorites-tree');
+const btnCreateFolder = document.getElementById('btn-create-folder');
+
+// Auth Modal DOM Elements
+const authModal = document.getElementById('auth-modal');
+const btnCloseAuthModal = document.getElementById('btn-close-auth-modal');
+const authTabs = document.querySelectorAll('.auth-tab');
+const authErrorMsg = document.getElementById('auth-error-msg');
+const loginForm = document.getElementById('login-form');
+const registerForm = document.getElementById('register-form');
+
 // Initialize App
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
+  await checkAuthOnStartup();
   fetchFilters();
   fetchBooks();
 });
@@ -162,6 +185,141 @@ function setupEventListeners() {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && bookDetailModal.classList.contains('active')) {
       closeModal();
+    }
+  });
+
+  // Favorites Drawer Toggle
+  btnToggleFavoritesDrawer.addEventListener('click', () => {
+    favoritesDrawer.classList.toggle('open');
+    if (favoritesDrawer.classList.contains('open') && state.user) {
+      fetchFavoritesAndFolders();
+    }
+  });
+
+  btnCloseDrawer.addEventListener('click', () => {
+    favoritesDrawer.classList.remove('open');
+  });
+
+  // Show Login Modal Drawer Trigger
+  drawerUserInfo.addEventListener('click', (e) => {
+    if (e.target && e.target.id === 'btn-show-login-modal-drawer') {
+      showAuthModal();
+    }
+  });
+
+  btnCloseAuthModal.addEventListener('click', closeAuthModal);
+  authModal.addEventListener('click', (e) => {
+    if (e.target === authModal) closeAuthModal();
+  });
+
+  // Tab switching in Auth modal
+  authTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      authTabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      const targetForm = tab.dataset.tab;
+      authErrorMsg.classList.add('hidden');
+      
+      if (targetForm === 'login') {
+        loginForm.classList.remove('hidden');
+        registerForm.classList.add('hidden');
+      } else {
+        loginForm.classList.add('hidden');
+        registerForm.classList.remove('hidden');
+      }
+    });
+  });
+
+  // Login form submit
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nickname = document.getElementById('login-nickname').value.trim();
+    const password = document.getElementById('login-password').value;
+    
+    authErrorMsg.classList.add('hidden');
+    
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname, password })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '로그인에 실패했습니다.');
+      
+      state.token = data.token;
+      localStorage.setItem('auth_token', data.token);
+      state.user = data.user;
+      
+      closeAuthModal();
+      updateAuthUI();
+      fetchFavoritesAndFolders();
+      fetchBooks(); // Refresh list to show active stars
+    } catch (err) {
+      authErrorMsg.textContent = err.message;
+      authErrorMsg.classList.remove('hidden');
+    }
+  });
+
+  // Register form submit
+  registerForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const nickname = document.getElementById('register-nickname').value.trim();
+    const password = document.getElementById('register-password').value;
+    const passwordConfirm = document.getElementById('register-password-confirm').value;
+    
+    authErrorMsg.classList.add('hidden');
+    
+    if (password !== passwordConfirm) {
+      authErrorMsg.textContent = '비밀번호가 일치하지 않습니다.';
+      authErrorMsg.classList.remove('hidden');
+      return;
+    }
+    
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname, password })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '회원가입에 실패했습니다.');
+      
+      state.token = data.token;
+      localStorage.setItem('auth_token', data.token);
+      state.user = data.user;
+      
+      closeAuthModal();
+      updateAuthUI();
+      fetchFavoritesAndFolders();
+      fetchBooks();
+    } catch (err) {
+      authErrorMsg.textContent = err.message;
+      authErrorMsg.classList.remove('hidden');
+    }
+  });
+
+  // Create folder category
+  btnCreateFolder.addEventListener('click', async () => {
+    const folderName = prompt('새 폴더 이름을 입력하세요:');
+    if (!folderName || !folderName.trim()) return;
+    
+    try {
+      const res = await fetch('/api/favorites/folders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.token}`
+        },
+        body: JSON.stringify({ name: folderName.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '폴더 생성 실패');
+      
+      fetchFavoritesAndFolders();
+    } catch (err) {
+      alert(err.message);
     }
   });
 }
@@ -477,18 +635,37 @@ function renderBooksList(books) {
       `;
     }
 
+    const isFav = book.is_favorite === 1 || state.favorites.some(f => f.book_id === book.id);
+    const isRead = state.readBooks.includes(book.id);
+    const favClass = isFav ? 'active' : '';
+    const readClass = isRead ? 'active' : '';
+    const readCompletedClass = isRead ? 'read-completed' : '';
+
     html += `
-      <div class="book-row" data-id="${book.id}">
+      <div class="book-row ${readCompletedClass}" data-id="${book.id}">
         <div class="book-cover-container">
           <div class="book-cover-fallback"><i class="fa-solid fa-book"></i></div>
           ${imgHtml}
         </div>
         <div class="book-info-col">
           <div class="book-title-row">
-            <h3 class="book-row-title" title="${book.title}">${book.title}</h3>
-            <span class="book-row-author">${author}</span>
+            <div class="book-row-title-text-wrap">
+              <h3 class="book-row-title" title="${book.title}">${book.title}</h3>
+            </div>
+            <div class="book-action-buttons-container">
+              <!-- Favorite Star Toggle -->
+              <button class="book-favorite-btn ${favClass}" data-id="${book.id}" title="즐겨찾기">
+                <i class="${isFav ? 'fa-solid' : 'fa-regular'} fa-star"></i>
+              </button>
+              <!-- Read Status Toggle -->
+              <button class="book-read-btn ${readClass}" data-id="${book.id}" title="읽음 완료">
+                <i class="fa-solid fa-book-open"></i>
+              </button>
+            </div>
           </div>
-          <div class="book-meta-details">
+          <div class="book-meta-details" style="margin-top: 0.25rem;">
+            <span>${author}</span>
+            <span class="meta-divider"></span>
             <span>${publisher}</span>
             <span class="meta-divider"></span>
             <span>${book.pub_year ? book.pub_year.substring(0, 10) : '발행일 미상'}</span>
@@ -513,8 +690,28 @@ function renderBooksList(books) {
   
   // Attach detail click events
   booksListContainer.querySelectorAll('.book-row').forEach(row => {
-    row.addEventListener('click', () => {
+    row.addEventListener('click', (e) => {
+      // Ignore click if action button was targeted
+      if (e.target.closest('.book-favorite-btn') || e.target.closest('.book-read-btn')) return;
       openBookDetail(row.dataset.id);
+    });
+  });
+
+  // Star favorite toggle click handler
+  booksListContainer.querySelectorAll('.book-favorite-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const bookId = btn.dataset.id;
+      await handleToggleFavorite(bookId);
+    });
+  });
+
+  // Read toggle click handler
+  booksListContainer.querySelectorAll('.book-read-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const bookId = btn.dataset.id;
+      handleToggleReadBook(bookId);
     });
   });
 }
@@ -650,6 +847,11 @@ async function openBookDetail(id) {
       `;
     }
 
+    const isFav = book.is_favorite === 1 || state.favorites.some(f => f.book_id === book.id);
+    const isRead = state.readBooks.includes(book.id);
+    const favClass = isFav ? 'active' : '';
+    const readClass = isRead ? 'active' : '';
+
     modalContentArea.innerHTML = `
       <div class="modal-detail-layout">
         <div class="modal-cover-box">
@@ -661,7 +863,19 @@ async function openBookDetail(id) {
             <span class="badge badge-subtype">${book.source_subtype}</span>
             ${book.category ? `<span class="badge badge-category">${book.category}</span>` : ''}
           </div>
-          <h2 class="modal-title">${book.title}</h2>
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; width: 100%;">
+            <h2 class="modal-title" style="flex: 1; margin: 0.5rem 0;">${book.title}</h2>
+            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-shrink: 0;">
+              <!-- Star icon in modal -->
+              <button class="book-favorite-btn ${favClass} modal-fav-btn" data-id="${book.id}" style="font-size: 1.5rem;" title="즐겨찾기">
+                <i class="${isFav ? 'fa-solid' : 'fa-regular'} fa-star"></i>
+              </button>
+              <!-- Read status in modal -->
+              <button class="book-read-btn ${readClass} modal-read-btn" data-id="${book.id}" style="font-size: 1.5rem;" title="읽음 완료">
+                <i class="fa-solid fa-book-open"></i>
+              </button>
+            </div>
+          </div>
           <p class="modal-author"><i class="fa-solid fa-pen-nib" style="margin-right: 6px;"></i> ${book.author || '저자 미상'}</p>
         </div>
       </div>
@@ -672,6 +886,25 @@ async function openBookDetail(id) {
 
       ${descriptionSection}
     `;
+
+    // Bind events inside Modal details
+    const modalFavBtn = modalContentArea.querySelector('.modal-fav-btn');
+    const modalReadBtn = modalContentArea.querySelector('.modal-read-btn');
+    
+    modalFavBtn.addEventListener('click', async () => {
+      const bookId = modalFavBtn.dataset.id;
+      await handleToggleFavorite(bookId);
+      const isFavNow = state.favorites.some(f => f.book_id === parseInt(bookId));
+      modalFavBtn.classList.toggle('active', isFavNow);
+      modalFavBtn.querySelector('i').className = isFavNow ? 'fa-solid fa-star' : 'fa-regular fa-star';
+    });
+
+    modalReadBtn.addEventListener('click', () => {
+      const bookId = modalReadBtn.dataset.id;
+      handleToggleReadBook(bookId);
+      const isReadNow = state.readBooks.includes(parseInt(bookId));
+      modalReadBtn.classList.toggle('active', isReadNow);
+    });
     
   } catch (error) {
     console.error('Error fetching detail data:', error);
@@ -687,4 +920,341 @@ async function openBookDetail(id) {
 // Close detail modal
 function closeModal() {
   bookDetailModal.classList.remove('active');
+}
+
+// ====================================================
+// AUTHENTICATION & FAVORITES MANAGEMENT CLIENT LOGIC
+// ====================================================
+
+function showAuthModal() {
+  authModal.classList.add('active');
+  authErrorMsg.classList.add('hidden');
+  loginForm.reset();
+  registerForm.reset();
+}
+
+function closeAuthModal() {
+  authModal.classList.remove('active');
+}
+
+function updateAuthUI() {
+  if (state.user) {
+    drawerUserInfo.innerHTML = `
+      <div class="user-logged-in-box">
+        <div class="user-welcome-text">
+          <i class="fa-solid fa-user-check" style="margin-right: 5px; color: var(--success);"></i>
+          <span>${state.user.nickname}</span> 님 서재
+        </div>
+        <button class="btn-logout" id="btn-logout">로그아웃</button>
+      </div>
+    `;
+    drawerFavoritesContent.classList.remove('hidden');
+    document.getElementById('btn-logout').addEventListener('click', handleLogout);
+  } else {
+    drawerUserInfo.innerHTML = `
+      <div class="auth-prompt">
+        <p>즐겨찾기 목록을 관리하려면 로그인해 주세요.</p>
+        <button class="btn-primary" id="btn-show-login-modal-drawer">로그인 / 회원가입</button>
+      </div>
+    `;
+    drawerFavoritesContent.classList.add('hidden');
+    favoritesTreeContainer.innerHTML = '';
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+  } catch (e) {
+    console.error('Logout error:', e);
+  }
+  
+  state.token = '';
+  state.user = null;
+  state.favorites = [];
+  state.folders = [];
+  localStorage.removeItem('auth_token');
+  
+  updateAuthUI();
+  fetchBooks();
+}
+
+async function checkAuthOnStartup() {
+  if (!state.token) return;
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      state.user = data.user;
+      updateAuthUI();
+      fetchFavoritesAndFolders();
+    } else {
+      state.token = '';
+      localStorage.removeItem('auth_token');
+      updateAuthUI();
+    }
+  } catch (err) {
+    console.error('Startup auth check error:', err);
+    state.token = '';
+    localStorage.removeItem('auth_token');
+    updateAuthUI();
+  }
+}
+
+async function fetchFavoritesAndFolders() {
+  if (!state.user) return;
+  try {
+    const headers = { 'Authorization': `Bearer ${state.token}` };
+    const [foldersRes, favoritesRes] = await Promise.all([
+      fetch('/api/favorites/folders', { headers }),
+      fetch('/api/favorites', { headers })
+    ]);
+    
+    if (!foldersRes.ok || !favoritesRes.ok) throw new Error('API query error');
+    
+    state.folders = await foldersRes.json();
+    state.favorites = await favoritesRes.json();
+    
+    renderFavoritesTree();
+  } catch (err) {
+    console.error('Error fetching favorites data:', err);
+    favoritesTreeContainer.innerHTML = '<div class="error-text">서재 목록 로드 실패</div>';
+  }
+}
+
+function renderFavoritesTree() {
+  if (state.folders.length === 0) {
+    favoritesTreeContainer.innerHTML = `
+      <div class="empty-favorites-notice">
+        <i class="fa-solid fa-folder-open"></i>
+        <p>생성된 폴더가 없습니다. 새 폴더를 만들어 보세요.</p>
+      </div>
+    `;
+    return;
+  }
+
+  let html = '';
+  state.folders.forEach(folder => {
+    const folderBooks = state.favorites.filter(f => f.category_id === folder.id);
+    const isOpen = localStorage.getItem(`folder_open_${folder.id}`) === 'true' ? 'open' : '';
+    
+    let booksHtml = '';
+    if (folderBooks.length === 0) {
+      booksHtml = `<div class="empty-favorites-notice" style="padding: 1rem;"><p style="font-size:0.75rem;">폴더가 비어 있습니다.</p></div>`;
+    } else {
+      folderBooks.forEach(fav => {
+        const coverHtml = fav.image_url && fav.image_url !== 'failed'
+          ? `<img src="${fav.image_url}" class="tree-book-cover" alt="${fav.title}">`
+          : `<div class="tree-book-cover-fallback"><i class="fa-solid fa-book"></i></div>`;
+
+        booksHtml += `
+          <div class="tree-book-item" data-id="${fav.book_id}">
+            <div class="tree-book-info">
+              ${coverHtml}
+              <div class="tree-book-details">
+                <span class="tree-book-title" title="${fav.title}">${fav.title}</span>
+                <span class="tree-book-author">${fav.author || '저자 미상'}</span>
+              </div>
+            </div>
+            <div class="tree-book-actions">
+              <button class="btn-book-action move-category" title="폴더 이동" data-id="${fav.book_id}"><i class="fa-solid fa-arrows-spin"></i></button>
+              <button class="btn-book-action unfavorite" title="즐겨찾기 해제" data-id="${fav.book_id}"><i class="fa-solid fa-trash-can"></i></button>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    html += `
+      <div class="tree-folder-group ${isOpen}" id="folder-group-${folder.id}">
+        <div class="tree-folder-header" data-id="${folder.id}">
+          <div class="tree-folder-title-box">
+            <span class="folder-arrow-icon"><i class="fa-solid fa-chevron-right"></i></span>
+            <span class="folder-icon"><i class="fa-solid fa-folder"></i></span>
+            <span class="folder-name-text">${folder.name}</span>
+            <span class="folder-count-badge">${folderBooks.length}</span>
+          </div>
+          ${folder.name !== '미분류' ? `
+            <div class="tree-folder-actions">
+              <button class="btn-folder-action edit-folder" title="이름 수정" data-id="${folder.id}"><i class="fa-solid fa-pen-to-square"></i></button>
+              <button class="btn-folder-action delete delete-folder" title="삭제" data-id="${folder.id}"><i class="fa-solid fa-folder-minus"></i></button>
+            </div>
+          ` : ''}
+        </div>
+        <div class="tree-folder-books">
+          ${booksHtml}
+        </div>
+      </div>
+    `;
+  });
+
+  favoritesTreeContainer.innerHTML = html;
+  setupFavoritesTreeEvents();
+}
+
+function setupFavoritesTreeEvents() {
+  favoritesTreeContainer.querySelectorAll('.tree-folder-header').forEach(header => {
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('.tree-folder-actions')) return;
+      const folderId = header.dataset.id;
+      const groupEl = document.getElementById(`folder-group-${folderId}`);
+      groupEl.classList.toggle('open');
+      localStorage.setItem(`folder_open_${folderId}`, groupEl.classList.contains('open'));
+    });
+  });
+
+  favoritesTreeContainer.querySelectorAll('.edit-folder').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const folderId = btn.dataset.id;
+      const folder = state.folders.find(f => f.id === parseInt(folderId));
+      if (!folder) return;
+      
+      const newName = prompt('폴더 이름을 입력하세요:', folder.name);
+      if (!newName || !newName.trim() || newName.trim() === folder.name) return;
+      
+      try {
+        const res = await fetch(`/api/favorites/folders/${folderId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.token}`
+          },
+          body: JSON.stringify({ name: newName.trim() })
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '폴더 수정 실패');
+        }
+        fetchFavoritesAndFolders();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+
+  favoritesTreeContainer.querySelectorAll('.delete-folder').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const folderId = btn.dataset.id;
+      if (!confirm('정말 이 폴더를 삭제하시겠습니까? (도서들은 미분류로 이동됩니다)')) return;
+      
+      try {
+        const res = await fetch(`/api/favorites/folders/${folderId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${state.token}` }
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '폴더 삭제 실패');
+        }
+        fetchFavoritesAndFolders();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+
+  favoritesTreeContainer.querySelectorAll('.tree-book-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('.tree-book-actions')) return;
+      openBookDetail(item.dataset.id);
+    });
+  });
+
+  favoritesTreeContainer.querySelectorAll('.unfavorite').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const bookId = btn.dataset.id;
+      await handleToggleFavorite(bookId, true);
+    });
+  });
+
+  favoritesTreeContainer.querySelectorAll('.move-category').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const bookId = btn.dataset.id;
+      
+      const folderOptions = state.folders.map((f, i) => `${i + 1}. ${f.name}`).join('\n');
+      const selectionText = prompt(`이동할 폴더 번호를 입력해 주세요:\n\n${folderOptions}`);
+      if (!selectionText) return;
+      
+      const index = parseInt(selectionText.trim()) - 1;
+      if (isNaN(index) || index < 0 || index >= state.folders.length) {
+        alert('올바른 폴더 번호를 입력해 주세요.');
+        return;
+      }
+      
+      const targetFolder = state.folders[index];
+      try {
+        const res = await fetch(`/api/favorites/${bookId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.token}`
+          },
+          body: JSON.stringify({ category_id: targetFolder.id })
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '폴더 이동 실패');
+        }
+        fetchFavoritesAndFolders();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+}
+
+async function handleToggleFavorite(bookId, forceDelete = false) {
+  if (!state.user) {
+    showAuthModal();
+    return;
+  }
+
+  const isFav = state.favorites.some(f => f.book_id === parseInt(bookId));
+  try {
+    if (isFav || forceDelete) {
+      const res = await fetch(`/api/favorites/${bookId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${state.token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '즐겨찾기 삭제 실패');
+    } else {
+      const res = await fetch('/api/favorites', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.token}`
+        },
+        body: JSON.stringify({ book_id: parseInt(bookId) })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '즐겨찾기 추가 실패');
+    }
+    
+    await fetchFavoritesAndFolders();
+    fetchBooks();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function handleToggleReadBook(bookId) {
+  const parsedId = parseInt(bookId);
+  const index = state.readBooks.indexOf(parsedId);
+  if (index > -1) {
+    state.readBooks.splice(index, 1);
+  } else {
+    state.readBooks.push(parsedId);
+  }
+  localStorage.setItem('read_books', JSON.stringify(state.readBooks));
+  fetchBooks();
 }
