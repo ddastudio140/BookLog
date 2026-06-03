@@ -41,10 +41,11 @@ const sourceOptionsList = document.getElementById('source-options-list');
 const btnToggleFavoritesDrawer = document.getElementById('btn-toggle-favorites-drawer');
 const btnCloseDrawer = document.getElementById('btn-close-drawer');
 const favoritesDrawer = document.getElementById('favorites-drawer');
-const drawerUserInfo = document.getElementById('drawer-user-info');
+const drawerHeaderUser = document.getElementById('drawer-header-user');
+const drawerLoginPrompt = document.getElementById('drawer-login-prompt');
 const drawerFavoritesContent = document.getElementById('drawer-favorites-content');
 const favoritesTreeContainer = document.getElementById('favorites-tree');
-const btnCreateFolder = document.getElementById('btn-create-folder');
+const headerRightArea = document.getElementById('header-right-area');
 
 // Auth Modal DOM Elements
 const authModal = document.getElementById('auth-modal');
@@ -200,8 +201,8 @@ function setupEventListeners() {
     favoritesDrawer.classList.remove('open');
   });
 
-  // Show Login Modal Drawer Trigger
-  drawerUserInfo.addEventListener('click', (e) => {
+  // Show Login Modal — from drawer login prompt
+  drawerLoginPrompt.addEventListener('click', (e) => {
     if (e.target && e.target.id === 'btn-show-login-modal-drawer') {
       showAuthModal();
     }
@@ -301,27 +302,6 @@ function setupEventListeners() {
   });
 
   // Create folder category
-  btnCreateFolder.addEventListener('click', async () => {
-    const folderName = prompt('새 폴더 이름을 입력하세요:');
-    if (!folderName || !folderName.trim()) return;
-    
-    try {
-      const res = await fetch('/api/favorites/folders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${state.token}`
-        },
-        body: JSON.stringify({ name: folderName.trim() })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || '폴더 생성 실패');
-      
-      fetchFavoritesAndFolders();
-    } catch (err) {
-      alert(err.message);
-    }
-  });
 }
 
 // Reset page completely to default state
@@ -939,25 +919,34 @@ function closeAuthModal() {
 
 function updateAuthUI() {
   if (state.user) {
-    drawerUserInfo.innerHTML = `
-      <div class="user-logged-in-box">
-        <div class="user-welcome-text">
-          <i class="fa-solid fa-user-check" style="margin-right: 5px; color: var(--success);"></i>
-          <span>${state.user.nickname}</span> 님 서재
-        </div>
-        <button class="btn-logout" id="btn-logout">로그아웃</button>
-      </div>
+    // 1) drawer-header에 닉네임 표시
+    drawerHeaderUser.innerHTML = `
+      <span class="drawer-header-nickname">
+        <i class="fa-solid fa-user-check"></i> ${state.user.nickname}
+      </span>
     `;
-    drawerFavoritesContent.classList.remove('hidden');
+
+    // 2) main-header 우측에 로그아웃 버튼
+    headerRightArea.innerHTML = `
+      <button class="btn-logout" id="btn-logout">
+        <i class="fa-solid fa-right-from-bracket"></i> 로그아웃
+      </button>
+    `;
     document.getElementById('btn-logout').addEventListener('click', handleLogout);
+
+    // 3) 드로어 콘텐츠 표시, 로그인 프롬프트 숨김
+    drawerFavoritesContent.classList.remove('hidden');
+    drawerLoginPrompt.classList.add('hidden');
   } else {
-    drawerUserInfo.innerHTML = `
-      <div class="auth-prompt">
-        <p>즐겨찾기 목록을 관리하려면 로그인해 주세요.</p>
-        <button class="btn-primary" id="btn-show-login-modal-drawer">로그인 / 회원가입</button>
-      </div>
-    `;
+    // 1) drawer-header 닉네임 초기화
+    drawerHeaderUser.innerHTML = '';
+
+    // 2) main-header 우측 초기화
+    headerRightArea.innerHTML = '';
+
+    // 3) 드로어 콘텐츠 숨김, 로그인 프롬프트 표시
     drawerFavoritesContent.classList.add('hidden');
+    drawerLoginPrompt.classList.remove('hidden');
     favoritesTreeContainer.innerHTML = '';
   }
 }
@@ -1020,6 +1009,15 @@ async function fetchFavoritesAndFolders() {
     state.folders = await foldersRes.json();
     state.favorites = await favoritesRes.json();
     
+    // Sync state.readBooks from the database favorites
+    const readRoot = state.folders.find(f => f.name === '독서 완료' && f.parent_id === null);
+    if (readRoot) {
+      const readFolderIds = state.folders.filter(f => f.parent_id === readRoot.id).map(f => f.id);
+      state.readBooks = state.favorites.filter(f => readFolderIds.includes(f.category_id)).map(f => f.book_id);
+    } else {
+      state.readBooks = [];
+    }
+    
     renderFavoritesTree();
   } catch (err) {
     console.error('Error fetching favorites data:', err);
@@ -1027,80 +1025,166 @@ async function fetchFavoritesAndFolders() {
   }
 }
 
-function renderFavoritesTree() {
-  if (state.folders.length === 0) {
-    favoritesTreeContainer.innerHTML = `
-      <div class="empty-favorites-notice">
-        <i class="fa-solid fa-folder-open"></i>
-        <p>생성된 폴더가 없습니다. 새 폴더를 만들어 보세요.</p>
+function renderFolderHtml(folder) {
+  const folderBooks = state.favorites.filter(f => f.category_id === folder.id);
+  const isOpen = localStorage.getItem(`folder_open_${folder.id}`) === 'true' ? 'open' : '';
+  
+  let booksHtml = '';
+  if (folderBooks.length === 0) {
+    booksHtml = `<div class="empty-favorites-notice" style="padding: 1rem;"><p style="font-size:0.75rem;">폴더가 비어 있습니다.</p></div>`;
+  } else {
+    folderBooks.forEach(fav => {
+      const coverHtml = fav.image_url && fav.image_url !== 'failed'
+        ? `<img src="${fav.image_url}" class="tree-book-cover" alt="${fav.title}">`
+        : `<div class="tree-book-cover-fallback"><i class="fa-solid fa-book"></i></div>`;
+
+      booksHtml += `
+        <div class="tree-book-item" data-id="${fav.book_id}" draggable="true">
+          <div class="tree-book-info">
+            <i class="fa-solid fa-grip-vertical drag-handle" style="color: var(--text-muted); cursor: grab; margin-right: 0.4rem; font-size: 0.85rem;"></i>
+            ${coverHtml}
+            <div class="tree-book-details">
+              <span class="tree-book-title" title="${fav.title}">${fav.title}</span>
+              <span class="tree-book-author">${fav.author || '저자 미상'}</span>
+            </div>
+          </div>
+          <div class="tree-book-actions">
+            <button class="btn-book-action unfavorite" title="삭제" data-id="${fav.book_id}" data-category-id="${folder.id}"><i class="fa-solid fa-trash-can"></i></button>
+          </div>
+        </div>
+      `;
+    });
+  }
+
+  const favRoot = state.folders.find(f => f.name === '즐겨찾기' && f.parent_id === null);
+  const readRoot = state.folders.find(f => f.name === '독서 완료' && f.parent_id === null);
+  
+  const favSubfolders = favRoot ? state.folders.filter(f => f.parent_id === favRoot.id) : [];
+  const minFolderId = favSubfolders.length > 0 ? Math.min(...favSubfolders.map(f => f.id)) : -1;
+  const isDefaultFolder = folder.id === minFolderId;
+  const isReadSubfolder = readRoot && folder.parent_id === readRoot.id;
+
+  return `
+    <div class="tree-folder-group ${isOpen}" id="folder-group-${folder.id}" data-folder-id="${folder.id}">
+      <div class="tree-folder-header" data-id="${folder.id}">
+        <div class="tree-folder-title-box">
+          <span class="folder-arrow-icon"><i class="fa-solid fa-chevron-right"></i></span>
+          <span class="folder-icon"><i class="fa-solid fa-folder"></i></span>
+          <span class="folder-name-text">${folder.name}</span>
+          <span class="folder-count-badge">${folderBooks.length}</span>
+        </div>
+        <div class="tree-folder-actions">
+          <button class="btn-folder-action edit-folder" title="이름 수정" data-id="${folder.id}"><i class="fa-solid fa-pen-to-square"></i></button>
+          ${!isDefaultFolder ? `
+            <button class="btn-folder-action delete delete-folder" title="삭제" data-id="${folder.id}"><i class="fa-solid fa-folder-minus"></i></button>
+          ` : ''}
+        </div>
       </div>
-    `;
+      <div class="tree-folder-books">
+        ${booksHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderFavoritesTree() {
+  const favRoot = state.folders.find(f => f.name === '즐겨찾기' && f.parent_id === null);
+  const readRoot = state.folders.find(f => f.name === '독서 완료' && f.parent_id === null);
+  
+  if (!favRoot || !readRoot) {
+    favoritesTreeContainer.innerHTML = '<div class="empty-favorites-notice"><p>서재를 초기화하는 중입니다...</p></div>';
     return;
   }
 
   let html = '';
-  state.folders.forEach(folder => {
-    const folderBooks = state.favorites.filter(f => f.category_id === folder.id);
-    const isOpen = localStorage.getItem(`folder_open_${folder.id}`) === 'true' ? 'open' : '';
-    
-    let booksHtml = '';
-    if (folderBooks.length === 0) {
-      booksHtml = `<div class="empty-favorites-notice" style="padding: 1rem;"><p style="font-size:0.75rem;">폴더가 비어 있습니다.</p></div>`;
-    } else {
-      folderBooks.forEach(fav => {
-        const coverHtml = fav.image_url && fav.image_url !== 'failed'
-          ? `<img src="${fav.image_url}" class="tree-book-cover" alt="${fav.title}">`
-          : `<div class="tree-book-cover-fallback"><i class="fa-solid fa-book"></i></div>`;
-
-        booksHtml += `
-          <div class="tree-book-item" data-id="${fav.book_id}" draggable="true">
-            <div class="tree-book-info">
-              <i class="fa-solid fa-grip-vertical drag-handle" style="color: var(--text-muted); cursor: grab; margin-right: 0.4rem; font-size: 0.85rem;"></i>
-              ${coverHtml}
-              <div class="tree-book-details">
-                <span class="tree-book-title" title="${fav.title}">${fav.title}</span>
-                <span class="tree-book-author">${fav.author || '저자 미상'}</span>
-              </div>
-            </div>
-            <div class="tree-book-actions">
-              <button class="btn-book-action unfavorite" title="즐겨찾기 해제" data-id="${fav.book_id}"><i class="fa-solid fa-trash-can"></i></button>
-            </div>
-          </div>
-        `;
-      });
-    }
-
-    const minFolderId = state.folders.length > 0 ? Math.min(...state.folders.map(f => f.id)) : -1;
-    const isDefaultFolder = folder.id === minFolderId;
-
-    html += `
-      <div class="tree-folder-group ${isOpen}" id="folder-group-${folder.id}" data-folder-id="${folder.id}">
-        <div class="tree-folder-header" data-id="${folder.id}">
-          <div class="tree-folder-title-box">
-            <span class="folder-arrow-icon"><i class="fa-solid fa-chevron-right"></i></span>
-            <span class="folder-icon"><i class="fa-solid fa-folder"></i></span>
-            <span class="folder-name-text">${folder.name}</span>
-            <span class="folder-count-badge">${folderBooks.length}</span>
-          </div>
-          <div class="tree-folder-actions">
-            <button class="btn-folder-action edit-folder" title="이름 수정" data-id="${folder.id}"><i class="fa-solid fa-pen-to-square"></i></button>
-            ${!isDefaultFolder ? `
-              <button class="btn-folder-action delete delete-folder" title="삭제" data-id="${folder.id}"><i class="fa-solid fa-folder-minus"></i></button>
-            ` : ''}
-          </div>
-        </div>
-        <div class="tree-folder-books">
-          ${booksHtml}
-        </div>
+  
+  // Render Group 1: 즐겨찾기
+  const favSubfolders = state.folders.filter(f => f.parent_id === favRoot.id);
+  html += `
+    <div class="tree-root-section">
+      <div class="tree-root-header">
+        <i class="fa-solid fa-star" style="color: #fbbf24; margin-right: 6px;"></i>
+        <span>즐겨찾기</span>
+        <button class="btn-add-folder" data-root="fav" title="새 폴더 추가">
+          <i class="fa-solid fa-folder-plus"></i>
+        </button>
       </div>
-    `;
-  });
+      <div class="tree-root-body">
+  `;
+  if (favSubfolders.length === 0) {
+    html += `<div class="empty-favorites-notice" style="padding: 1rem;"><p style="font-size:0.75rem;">즐겨찾기 폴더가 없습니다.</p></div>`;
+  } else {
+    favSubfolders.forEach(folder => {
+      html += renderFolderHtml(folder);
+    });
+  }
+  html += `
+      </div>
+    </div>
+  `;
+
+  // Render Group 2: 독서 완료
+  const readSubfolders = state.folders.filter(f => f.parent_id === readRoot.id)
+                                     .sort((a, b) => b.name.localeCompare(a.name)); // 날짜 역순 정렬
+  html += `
+    <div class="tree-root-section">
+      <div class="tree-root-header">
+        <i class="fa-solid fa-book-open" style="color: #10b981; margin-right: 6px;"></i>
+        <span>독서 완료</span>
+        <button class="btn-add-folder" data-root="read" title="새 폴더 추가">
+          <i class="fa-solid fa-folder-plus"></i>
+        </button>
+      </div>
+      <div class="tree-root-body">
+  `;
+  if (readSubfolders.length === 0) {
+    html += `<div class="empty-favorites-notice" style="padding: 1rem;"><p style="font-size:0.75rem;">독서 완료된 책이 없습니다.</p></div>`;
+  } else {
+    readSubfolders.forEach(folder => {
+      html += renderFolderHtml(folder);
+    });
+  }
+  html += `
+      </div>
+    </div>
+  `;
 
   favoritesTreeContainer.innerHTML = html;
   setupFavoritesTreeEvents();
 }
 
 function setupFavoritesTreeEvents() {
+  // Add folder buttons in each root header
+  favoritesTreeContainer.querySelectorAll('.btn-add-folder').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const rootType = btn.dataset.root; // 'fav' or 'read'
+      const folderName = prompt('새 폴더 이름을 입력하세요:');
+      if (!folderName || !folderName.trim()) return;
+
+      // Find parent root id
+      const rootName = rootType === 'fav' ? '즐겨찾기' : '독서 완료';
+      const rootFolder = state.folders.find(f => f.name === rootName && f.parent_id === null);
+      if (!rootFolder) return;
+
+      try {
+        const res = await fetch('/api/favorites/folders', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.token}`
+          },
+          body: JSON.stringify({ name: folderName.trim(), parent_id: rootFolder.id })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '폴더 생성 실패');
+        fetchFavoritesAndFolders();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  });
+
   // Toggle folder expansion
   favoritesTreeContainer.querySelectorAll('.tree-folder-header').forEach(header => {
     header.addEventListener('click', (e) => {
@@ -1174,12 +1258,27 @@ function setupFavoritesTreeEvents() {
     });
   });
 
-  // Unfavorite button click in tree drawer
+  // Unfavorite (delete book from specific folder) button click in tree drawer
   favoritesTreeContainer.querySelectorAll('.unfavorite').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const bookId = btn.dataset.id;
-      await handleToggleFavorite(bookId, true);
+      const categoryId = btn.dataset.categoryId;
+      
+      try {
+        const res = await fetch(`/api/favorites/${bookId}?category_id=${categoryId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${state.token}` }
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || '삭제 실패');
+        }
+        await fetchFavoritesAndFolders();
+        fetchBooks();
+      } catch (err) {
+        alert(err.message);
+      }
     });
   });
 
@@ -1190,6 +1289,11 @@ function setupFavoritesTreeEvents() {
     bookEl.addEventListener('dragstart', (e) => {
       bookEl.classList.add('dragging');
       e.dataTransfer.setData('text/plain', bookEl.dataset.id);
+      
+      const sourceFolderEl = bookEl.closest('.tree-folder-group');
+      if (sourceFolderEl) {
+        e.dataTransfer.setData('source-folder-id', sourceFolderEl.dataset.folderId);
+      }
       e.dataTransfer.effectAllowed = 'move';
     });
 
@@ -1215,14 +1319,11 @@ function setupFavoritesTreeEvents() {
       folderEl.classList.remove('drag-over');
       
       const bookId = e.dataTransfer.getData('text/plain');
+      const sourceFolderId = e.dataTransfer.getData('source-folder-id');
       const targetFolderId = folderEl.dataset.folderId;
       
       if (!bookId || !targetFolderId) return;
-
-      const fav = state.favorites.find(f => f.book_id === parseInt(bookId));
-      if (fav && fav.category_id === parseInt(targetFolderId)) {
-        return; // Already in target folder
-      }
+      if (sourceFolderId === targetFolderId) return; // Same folder
 
       try {
         const res = await fetch(`/api/favorites/${bookId}`, {
@@ -1231,7 +1332,10 @@ function setupFavoritesTreeEvents() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${state.token}`
           },
-          body: JSON.stringify({ category_id: parseInt(targetFolderId) })
+          body: JSON.stringify({ 
+            category_id: parseInt(targetFolderId),
+            source_category_id: sourceFolderId ? parseInt(sourceFolderId) : null
+          })
         });
         if (!res.ok) {
           const data = await res.json();
@@ -1251,10 +1355,19 @@ async function handleToggleFavorite(bookId, forceDelete = false) {
     return;
   }
 
-  const isFav = state.favorites.some(f => f.book_id === parseInt(bookId));
+  // Find if this book is in the Favorites folder root hierarchy
+  const favRoot = state.folders.find(f => f.name === '즐겨찾기' && f.parent_id === null);
+  const favFolderIds = favRoot ? state.folders.filter(f => f.parent_id === favRoot.id).map(f => f.id) : [];
+  
+  const isFav = state.favorites.some(f => f.book_id === parseInt(bookId) && favFolderIds.includes(f.category_id));
+  const mapping = state.favorites.find(f => f.book_id === parseInt(bookId) && favFolderIds.includes(f.category_id));
+  const categoryToDelete = mapping ? mapping.category_id : null;
+
   try {
     if (isFav || forceDelete) {
-      const res = await fetch(`/api/favorites/${bookId}`, {
+      // If categoryId is determined, delete from that specific folder
+      const url = categoryToDelete ? `/api/favorites/${bookId}?category_id=${categoryToDelete}` : `/api/favorites/${bookId}`;
+      const res = await fetch(url, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${state.token}` }
       });
@@ -1280,14 +1393,30 @@ async function handleToggleFavorite(bookId, forceDelete = false) {
   }
 }
 
-function handleToggleReadBook(bookId) {
-  const parsedId = parseInt(bookId);
-  const index = state.readBooks.indexOf(parsedId);
-  if (index > -1) {
-    state.readBooks.splice(index, 1);
-  } else {
-    state.readBooks.push(parsedId);
+async function handleToggleReadBook(bookId) {
+  if (!state.user) {
+    showAuthModal();
+    return;
   }
-  localStorage.setItem('read_books', JSON.stringify(state.readBooks));
-  fetchBooks();
+
+  const parsedId = parseInt(bookId);
+  const isRead = state.readBooks.includes(parsedId);
+  
+  try {
+    const res = await fetch('/api/favorites/read', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.token}`
+      },
+      body: JSON.stringify({ book_id: parsedId, is_read: !isRead })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '읽음 상태 변경 실패');
+    
+    await fetchFavoritesAndFolders();
+    fetchBooks();
+  } catch (err) {
+    alert(err.message);
+  }
 }

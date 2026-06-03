@@ -28,6 +28,11 @@
         <h1>사서의<span> 추천 도서</span></h1>
       </div>
 
+      <!-- Header Right: Auth Info + Logout -->
+      <div class="header-right-area" id="header-right-area">
+        <!-- Dynamically populated by updateAuthUI() -->
+      </div>
+
       <!-- Mobile Menu Button -->
       <button class="mobile-filter-toggle" id="btn-toggle-filters">
         <i class="fa-solid fa-sliders"></i>
@@ -155,26 +160,25 @@
             <i class="fa-solid fa-book-bookmark drawer-title-icon"></i>
             <h3>내 서재</h3>
           </div>
+          <!-- Logged-in user's name shown here -->
+          <div class="drawer-header-user" id="drawer-header-user"></div>
           <button class="close-drawer-btn" id="btn-close-drawer">
             <i class="fa-solid fa-xmark"></i>
           </button>
         </div>
 
-        <!-- User Auth Status Info -->
-        <div class="drawer-user-info" id="drawer-user-info">
-          <div class="auth-prompt">
-            <p>즐겨찾기 목록을 관리하려면 로그인해 주세요.</p>
-            <button class="btn-primary" id="btn-show-login-modal-drawer">로그인 / 회원가입</button>
+        <!-- Favorites Tree/List Content -->
+        <div class="drawer-content hidden" id="drawer-favorites-content">
+          <div class="favorites-tree" id="favorites-tree">
+            <!-- Dynamically populated categories & books -->
           </div>
         </div>
 
-        <!-- Favorites Tree/List Content -->
-        <div class="drawer-content hidden" id="drawer-favorites-content">
-          <div class="drawer-actions">
-            <button class="btn-sm" id="btn-create-folder"><i class="fa-solid fa-folder-plus"></i> 새 폴더</button>
-          </div>
-          <div class="favorites-tree" id="favorites-tree">
-            <!-- Dynamically populated categories & books -->
+        <!-- Not logged in: login prompt -->
+        <div class="drawer-login-prompt hidden" id="drawer-login-prompt">
+          <div class="auth-prompt">
+            <p>즐겨찾기 목록을 관리하려면 로그인해 주세요.</p>
+            <button class="btn-primary" id="btn-show-login-modal-drawer">로그인 / 회원가입</button>
           </div>
         </div>
       </aside>

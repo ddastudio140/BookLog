@@ -93,22 +93,68 @@ db.serialize(() => {
     if (err) console.error('Error creating favorite_categories table:', err.message);
   });
 
-  // Create Favorites table (maps books to user and categories)
-  db.run(`
-    CREATE TABLE IF NOT EXISTS favorites (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      book_id INTEGER NOT NULL,
-      category_id INTEGER DEFAULT NULL,    -- NULL means uncategorized (미분류)
-      sort_order INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE,
-      FOREIGN KEY(category_id) REFERENCES favorite_categories(id) ON DELETE SET NULL,
-      UNIQUE(user_id, book_id)
-    )
-  `, (err) => {
-    if (err) console.error('Error creating favorites table:', err.message);
+  // Check and migrate/create favorites table with new UNIQUE constraint
+  db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='favorites'", (err, row) => {
+    if (err) {
+      console.error('Error checking favorites table:', err.message);
+      return;
+    }
+    
+    if (!row) {
+      // Table doesn't exist, create it with UNIQUE(user_id, book_id, category_id)
+      db.run(`
+        CREATE TABLE IF NOT EXISTS favorites (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          book_id INTEGER NOT NULL,
+          category_id INTEGER DEFAULT NULL,    -- NULL means uncategorized (미분류)
+          sort_order INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+          FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE,
+          FOREIGN KEY(category_id) REFERENCES favorite_categories(id) ON DELETE SET NULL,
+          UNIQUE(user_id, book_id, category_id)
+        )
+      `, (createErr) => {
+        if (createErr) console.error('Error creating favorites table:', createErr.message);
+      });
+    } else {
+      // Table exists, check if it has old UNIQUE constraint
+      const sql = row.sql;
+      if (sql.includes('UNIQUE(user_id, book_id)') && !sql.includes('UNIQUE(user_id, book_id, category_id)')) {
+        console.log('Migrating favorites table: changing UNIQUE constraint...');
+        db.serialize(() => {
+          db.run("BEGIN TRANSACTION;");
+          db.run("ALTER TABLE favorites RENAME TO favorites_old;");
+          db.run(`
+            CREATE TABLE favorites (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              user_id INTEGER NOT NULL,
+              book_id INTEGER NOT NULL,
+              category_id INTEGER DEFAULT NULL,
+              sort_order INTEGER DEFAULT 0,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+              FOREIGN KEY(book_id) REFERENCES books(id) ON DELETE CASCADE,
+              FOREIGN KEY(category_id) REFERENCES favorite_categories(id) ON DELETE SET NULL,
+              UNIQUE(user_id, book_id, category_id)
+            )
+          `);
+          db.run(`
+            INSERT INTO favorites (id, user_id, book_id, category_id, sort_order, created_at)
+            SELECT id, user_id, book_id, category_id, sort_order, created_at FROM favorites_old;
+          `);
+          db.run("DROP TABLE favorites_old;");
+          db.run("COMMIT;", (commitErr) => {
+            if (commitErr) {
+              console.error('Error committing favorites migration:', commitErr.message);
+            } else {
+              console.log('Favorites table migrated successfully (UNIQUE constraint relaxed).');
+            }
+          });
+        });
+      }
+    }
   });
 
   // Alter table to add image_url column if it doesn't exist (migration for existing db)

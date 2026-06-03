@@ -389,6 +389,135 @@ function optionalAuth(req, res, next) {
   );
 }
 
+function ensureUserRoots(userId, callback) {
+  // 1. Check if '즐겨찾기' root category exists
+  db.get(
+    "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '즐겨찾기' AND parent_id IS NULL",
+    [userId],
+    (err, favRoot) => {
+      if (err) return callback(err);
+      
+      if (!favRoot) {
+        // Create '즐겨찾기' root
+        db.run(
+          "INSERT INTO favorite_categories (user_id, name, parent_id, sort_order) VALUES (?, '즐겨찾기', NULL, 0)",
+          [userId],
+          function(err2) {
+            if (err2) return callback(err2);
+            const favRootId = this.lastID;
+            
+            // Now ensure '독서 완료' root exists
+            ensureReadRoot(userId, favRootId, callback);
+          }
+        );
+      } else {
+        ensureReadRoot(userId, favRoot.id, callback);
+      }
+    }
+  );
+
+  function ensureReadRoot(userId, favRootId, callback) {
+    db.get(
+      "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '독서 완료' AND parent_id IS NULL",
+      [userId],
+      (err, readRoot) => {
+        if (err) return callback(err);
+        
+        if (!readRoot) {
+          // Create '독서 완료' root
+          db.run(
+            "INSERT INTO favorite_categories (user_id, name, parent_id, sort_order) VALUES (?, '독서 완료', NULL, 1)",
+            [userId],
+            function(err2) {
+              if (err2) return callback(err2);
+              
+              // Now ensure a default '미분류' folder exists under '즐겨찾기' root
+              ensureDefaultFolder(userId, favRootId, callback);
+            }
+          );
+        } else {
+          ensureDefaultFolder(userId, favRootId, callback);
+        }
+      }
+    );
+  }
+
+  function ensureDefaultFolder(userId, favRootId, callback) {
+    // Check if there are any categories under '즐겨찾기' root
+    db.get(
+      "SELECT id FROM favorite_categories WHERE user_id = ? AND parent_id = ?",
+      [userId, favRootId],
+      (err, anySub) => {
+        if (err) return callback(err);
+        
+        if (!anySub) {
+          // Check if there are ANY categories with parent_id IS NULL (except roots).
+          // Migrate them to be subfolders of '즐겨찾기'
+          db.all(
+            "SELECT id, name FROM favorite_categories WHERE user_id = ? AND parent_id IS NULL AND name NOT IN ('즐겨찾기', '독서 완료')",
+            [userId],
+            (err2, oldRoots) => {
+              if (err2) return callback(err2);
+              
+              if (oldRoots && oldRoots.length > 0) {
+                // Migrate old roots to be children of '즐겨찾기'
+                db.serialize(() => {
+                  oldRoots.forEach(r => {
+                    db.run("UPDATE favorite_categories SET parent_id = ? WHERE id = ?", [favRootId, r.id]);
+                  });
+                  callback(null);
+                });
+              } else {
+                // Create default '미분류' under '즐겨찾기'
+                db.run(
+                  "INSERT INTO favorite_categories (user_id, name, parent_id, sort_order) VALUES (?, '미분류', ?, 0)",
+                  [userId, favRootId],
+                  (err3) => {
+                    callback(err3);
+                  }
+                );
+              }
+            }
+          );
+        } else {
+          // Roots and subs exist, but let's double check if there are any stray folders with parent_id = NULL (except roots)
+          db.run(
+            "UPDATE favorite_categories SET parent_id = ? WHERE user_id = ? AND parent_id IS NULL AND name NOT IN ('즐겨찾기', '독서 완료')",
+            [favRootId, userId],
+            (errMigrate) => {
+              callback(errMigrate);
+            }
+          );
+        }
+      }
+    );
+  }
+}
+
+function getUserRootIds(userId, callback) {
+  ensureUserRoots(userId, (err) => {
+    if (err) return callback(err);
+    
+    db.all(
+      "SELECT id, name FROM favorite_categories WHERE user_id = ? AND parent_id IS NULL AND name IN ('즐겨찾기', '독서 완료')",
+      [userId],
+      (err2, rows) => {
+        if (err2) return callback(err2);
+        
+        let favRootId = null;
+        let readRootId = null;
+        
+        rows.forEach(r => {
+          if (r.name === '즐겨찾기') favRootId = r.id;
+          if (r.name === '독서 완료') readRootId = r.id;
+        });
+        
+        callback(null, { favRootId, readRootId });
+      }
+    );
+  });
+}
+
 // API Endpoint: Get filters configuration
 app.get('/api/filters', (req, res) => {
   const queries = {
@@ -459,152 +588,213 @@ app.get('/api/books', optionalAuth, (req, res) => {
   const subtype = req.query.subtype || '';
   const category = req.query.category || '';
 
-  let sql = 'SELECT *, 0 as is_favorite FROM books WHERE 1=1';
-  if (req.user) {
-    sql = 'SELECT *, (SELECT 1 FROM favorites WHERE favorites.book_id = books.id AND favorites.user_id = ?) as is_favorite FROM books WHERE 1=1';
-  }
-  let countSql = 'SELECT COUNT(*) as total FROM books WHERE 1=1';
-  const params = [];
+  const runQuery = (favRootId, readRootId) => {
+    let sql = 'SELECT *, 0 as is_favorite, 0 as is_read FROM books WHERE 1=1';
+    let countSql = 'SELECT COUNT(*) as total FROM books WHERE 1=1';
+    const params = [];
 
-  if (search) {
-    const searchPattern = `%${search}%`;
-    let searchClause = '';
-    
-    if (searchType === 'title') {
-      searchClause = ' AND title LIKE ?';
-      params.push(searchPattern);
-    } else if (searchType === 'author') {
-      searchClause = ' AND author LIKE ?';
-      params.push(searchPattern);
-    } else if (searchType === 'publisher') {
-      searchClause = ' AND publisher LIKE ?';
-      params.push(searchPattern);
-    } else if (searchType === 'isbn') {
-      searchClause = ' AND isbn LIKE ?';
-      params.push(searchPattern);
-    } else {
-      searchClause = ' AND (title LIKE ? OR author LIKE ? OR publisher LIKE ? OR description LIKE ? OR category LIKE ?)';
-      params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+    if (req.user && favRootId && readRootId) {
+      sql = `
+        SELECT b.*, 
+          (SELECT 1 FROM favorites f 
+           LEFT JOIN favorite_categories c ON f.category_id = c.id 
+           WHERE f.book_id = b.id AND f.user_id = ? 
+             AND (c.id = ? OR c.parent_id = ?)
+           LIMIT 1) as is_favorite,
+          (SELECT 1 FROM favorites f 
+           LEFT JOIN favorite_categories c ON f.category_id = c.id 
+           WHERE f.book_id = b.id AND f.user_id = ? 
+             AND (c.id = ? OR c.parent_id = ?)
+           LIMIT 1) as is_read
+        FROM books b 
+        WHERE 1=1
+      `;
     }
-    
-    sql += searchClause;
-    countSql += searchClause;
-  }
 
-  if (sourceType) {
-    sql += ' AND source_type = ?';
-    countSql += ' AND source_type = ?';
-    params.push(sourceType);
-  }
-
-  if (subtype) {
-    sql += ' AND source_subtype = ?';
-    countSql += ' AND source_subtype = ?';
-    params.push(subtype);
-  }
-
-  if (category) {
-    sql += ' AND category = ?';
-    countSql += ' AND category = ?';
-    params.push(category);
-  }
-
-  // Order alphabetically by title
-  sql += ' ORDER BY title ASC LIMIT ? OFFSET ?';
-  const queryParams = req.user ? [req.user.id, ...params, limit, offset] : [...params, limit, offset];
-
-  db.serialize(() => {
-    let totalCount = 0;
-    
-    // First query count
-    db.get(countSql, params, (err, row) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
+    if (search) {
+      const searchPattern = `%${search}%`;
+      let searchClause = '';
+      
+      if (searchType === 'title') {
+        searchClause = ' AND title LIKE ?';
+        params.push(searchPattern);
+      } else if (searchType === 'author') {
+        searchClause = ' AND author LIKE ?';
+        params.push(searchPattern);
+      } else if (searchType === 'publisher') {
+        searchClause = ' AND publisher LIKE ?';
+        params.push(searchPattern);
+      } else if (searchType === 'isbn') {
+        searchClause = ' AND isbn LIKE ?';
+        params.push(searchPattern);
+      } else {
+        searchClause = ' AND (title LIKE ? OR author LIKE ? OR publisher LIKE ? OR description LIKE ? OR category LIKE ?)';
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
       }
-      totalCount = row ? row.total : 0;
+      
+      sql += searchClause;
+      countSql += searchClause;
+    }
 
-      // Then query rows
-      db.all(sql, queryParams, async (err, rows) => {
+    if (sourceType) {
+      sql += ' AND source_type = ?';
+      countSql += ' AND source_type = ?';
+      params.push(sourceType);
+    }
+
+    if (subtype) {
+      sql += ' AND source_subtype = ?';
+      countSql += ' AND source_subtype = ?';
+      params.push(subtype);
+    }
+
+    if (category) {
+      sql += ' AND category = ?';
+      countSql += ' AND category = ?';
+      params.push(category);
+    }
+
+    // Order alphabetically by title
+    sql += ' ORDER BY title ASC LIMIT ? OFFSET ?';
+    
+    // Binding parameters
+    const queryParams = (req.user && favRootId && readRootId) 
+      ? [req.user.id, favRootId, favRootId, req.user.id, readRootId, readRootId, ...params, limit, offset]
+      : [...params, limit, offset];
+
+    db.serialize(() => {
+      let totalCount = 0;
+      
+      db.get(countSql, params, (err, row) => {
         if (err) {
           return res.status(500).json({ error: err.message });
         }
+        totalCount = row ? row.total : 0;
 
-        // On-the-fly fetch missing cover images for the list
-        if (rows.length > 0) {
-          try {
-            await populateMissingCovers(rows);
-          } catch (populateErr) {
-            console.error('Failed to populate covers on-the-fly:', populateErr.message);
+        db.all(sql, queryParams, async (err, rows) => {
+          if (err) {
+            return res.status(500).json({ error: err.message });
           }
-        }
 
-        res.json({
-          books: rows,
-          page,
-          limit,
-          total: totalCount,
-          totalPages: Math.ceil(totalCount / limit)
+          if (rows.length > 0) {
+            try {
+              await populateMissingCovers(rows);
+            } catch (populateErr) {
+              console.error('Failed to populate covers on-the-fly:', populateErr.message);
+            }
+          }
+
+          res.json({
+            books: rows,
+            page,
+            limit,
+            total: totalCount,
+            totalPages: Math.ceil(totalCount / limit)
+          });
         });
       });
     });
-  });
+  };
+
+  if (req.user) {
+    getUserRootIds(req.user.id, (err, roots) => {
+      if (err) {
+        console.error('Failed to ensure roots in books API:', err.message);
+        return runQuery(null, null);
+      }
+      runQuery(roots.favRootId, roots.readRootId);
+    });
+  } else {
+    runQuery(null, null);
+  }
 });
 
 // API Endpoint: Get book details by ID
 app.get('/api/books/:id', optionalAuth, (req, res) => {
   const id = req.params.id;
-  let sql = 'SELECT *, 0 as is_favorite FROM books WHERE id = ?';
-  let queryParams = [id];
+
+  const runQuery = (favRootId, readRootId) => {
+    let sql = 'SELECT *, 0 as is_favorite, 0 as is_read FROM books WHERE id = ?';
+    let queryParams = [id];
+
+    if (req.user && favRootId && readRootId) {
+      sql = `
+        SELECT b.*, 
+          (SELECT 1 FROM favorites f 
+           LEFT JOIN favorite_categories c ON f.category_id = c.id 
+           WHERE f.book_id = b.id AND f.user_id = ? 
+             AND (c.id = ? OR c.parent_id = ?)
+           LIMIT 1) as is_favorite,
+          (SELECT 1 FROM favorites f 
+           LEFT JOIN favorite_categories c ON f.category_id = c.id 
+           WHERE f.book_id = b.id AND f.user_id = ? 
+             AND (c.id = ? OR c.parent_id = ?)
+           LIMIT 1) as is_read
+        FROM books b 
+        WHERE b.id = ?
+      `;
+      queryParams = [req.user.id, favRootId, favRootId, req.user.id, readRootId, readRootId, id];
+    }
+
+    db.get(sql, queryParams, async (err, row) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      if (!row) {
+        return res.status(404).json({ error: 'Book not found' });
+      }
+
+      // On-the-fly fetch cover image if missing or marked failed
+      if ((!row.image_url || row.image_url === 'failed') && row.isbn) {
+        try {
+          const imageUrl = await fetchCoverImage(row.isbn);
+          if (imageUrl) {
+            row.image_url = imageUrl;
+            db.run('UPDATE books SET image_url = ? WHERE id = ?', [imageUrl, id]);
+          } else if (!row.image_url) {
+            db.run('UPDATE books SET image_url = ? WHERE id = ?', ['failed', id]);
+            row.image_url = 'failed';
+          }
+        } catch (fetchErr) {
+          console.error(`Failed to fetch cover on details view for book ${id}:`, fetchErr.message);
+        }
+      }
+
+      // On-the-fly fetch book summary if missing
+      if ((!row.summary || row.summary.trim() === '' || row.summary.trim() === 'failed') && row.isbn) {
+        try {
+          const summary = await fetchBookDescription(row.isbn);
+          if (summary) {
+            row.summary = summary;
+            db.run('UPDATE books SET summary = ? WHERE id = ?', [summary, id]);
+          }
+        } catch (descErr) {
+          console.error(`Failed to fetch summary for book ${id}:`, descErr.message);
+        }
+      } else if (row.summary) {
+        // Lazy migration: clean existing summaries in the database on-the-fly
+        const cleaned = cleanHtmlToText(row.summary);
+        if (cleaned !== row.summary) {
+          row.summary = cleaned;
+          db.run('UPDATE books SET summary = ? WHERE id = ?', [cleaned, id]);
+        }
+      }
+
+      res.json(row);
+    });
+  };
+
   if (req.user) {
-    sql = 'SELECT *, (SELECT 1 FROM favorites WHERE favorites.book_id = books.id AND favorites.user_id = ?) as is_favorite FROM books WHERE id = ?';
-    queryParams = [req.user.id, id];
+    getUserRootIds(req.user.id, (err, roots) => {
+      if (err) {
+        console.error('Failed to get roots in detail API:', err.message);
+        return runQuery(null, null);
+      }
+      runQuery(roots.favRootId, roots.readRootId);
+    });
+  } else {
+    runQuery(null, null);
   }
-  db.get(sql, queryParams, async (err, row) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    if (!row) {
-      return res.status(404).json({ error: 'Book not found' });
-    }
-
-    // On-the-fly fetch cover image if missing or marked failed
-    if ((!row.image_url || row.image_url === 'failed') && row.isbn) {
-      try {
-        const imageUrl = await fetchCoverImage(row.isbn);
-        if (imageUrl) {
-          row.image_url = imageUrl;
-          db.run('UPDATE books SET image_url = ? WHERE id = ?', [imageUrl, id]);
-        } else if (!row.image_url) {
-          db.run('UPDATE books SET image_url = ? WHERE id = ?', ['failed', id]);
-          row.image_url = 'failed';
-        }
-      } catch (fetchErr) {
-        console.error(`Failed to fetch cover on details view for book ${id}:`, fetchErr.message);
-      }
-    }
-
-    // On-the-fly fetch book summary if missing
-    if ((!row.summary || row.summary.trim() === '' || row.summary.trim() === 'failed') && row.isbn) {
-      try {
-        const summary = await fetchBookDescription(row.isbn);
-        if (summary) {
-          row.summary = summary;
-          db.run('UPDATE books SET summary = ? WHERE id = ?', [summary, id]);
-        }
-      } catch (descErr) {
-        console.error(`Failed to fetch summary for book ${id}:`, descErr.message);
-      }
-    } else if (row.summary) {
-      // Lazy migration: clean existing summaries in the database on-the-fly
-      const cleaned = cleanHtmlToText(row.summary);
-      if (cleaned !== row.summary) {
-        row.summary = cleaned;
-        db.run('UPDATE books SET summary = ? WHERE id = ?', [cleaned, id]);
-      }
-    }
-
-    res.json(row);
-  });
 });
 
 // ==========================================
@@ -659,19 +849,15 @@ app.post('/api/auth/register', (req, res) => {
               return res.status(500).json({ error: sessionErr.message });
             }
             
-            // Create a default '미분류' folder for the user
-            db.run(
-              'INSERT INTO favorite_categories (user_id, name, sort_order) VALUES (?, ?, ?)',
-              [userId, '미분류', 0],
-              (catErr) => {
-                if (catErr) console.error('Failed to create default category:', catErr.message);
-                res.status(201).json({
-                  message: '회원가입이 완료되었습니다.',
-                  token,
-                  user: { id: userId, nickname: cleanNickname }
-                });
-              }
-            );
+            // Ensure default roots and categories are created for the user
+            ensureUserRoots(userId, (catErr) => {
+              if (catErr) console.error('Failed to initialize user category roots:', catErr.message);
+              res.status(201).json({
+                message: '회원가입이 완료되었습니다.',
+                token,
+                user: { id: userId, nickname: cleanNickname }
+              });
+            });
           }
         );
       }
@@ -710,10 +896,13 @@ app.post('/api/auth/login', (req, res) => {
         if (sessionErr) {
           return res.status(500).json({ error: sessionErr.message });
         }
-        res.json({
-          message: '로그인에 성공했습니다.',
-          token,
-          user: { id: user.id, nickname: user.nickname }
+        ensureUserRoots(user.id, (catErr) => {
+          if (catErr) console.error('Failed to initialize/migrate user category roots on login:', catErr.message);
+          res.json({
+            message: '로그인에 성공했습니다.',
+            token,
+            user: { id: user.id, nickname: user.nickname }
+          });
         });
       }
     );
@@ -741,16 +930,21 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 
 // Get Favorite Categories (Folders)
 app.get('/api/favorites/folders', requireAuth, (req, res) => {
-  db.all(
-    'SELECT * FROM favorite_categories WHERE user_id = ? ORDER BY sort_order ASC, name ASC',
-    [req.user.id],
-    (err, rows) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json(rows);
+  ensureUserRoots(req.user.id, (err) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
     }
-  );
+    db.all(
+      'SELECT * FROM favorite_categories WHERE user_id = ? ORDER BY sort_order ASC, name ASC',
+      [req.user.id],
+      (err2, rows) => {
+        if (err2) {
+          return res.status(500).json({ error: err2.message });
+        }
+        res.json(rows);
+      }
+    );
+  });
 });
 
 // Create Favorite Category (Folder)
@@ -760,22 +954,39 @@ app.post('/api/favorites/folders', requireAuth, (req, res) => {
     return res.status(400).json({ error: '폴더 이름을 입력해 주세요.' });
   }
 
-  db.run(
-    'INSERT INTO favorite_categories (user_id, name, parent_id) VALUES (?, ?, ?)',
-    [req.user.id, name.trim(), parent_id || null],
-    function (err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
+  const insertFolder = (actualParentId) => {
+    db.run(
+      'INSERT INTO favorite_categories (user_id, name, parent_id) VALUES (?, ?, ?)',
+      [req.user.id, name.trim(), actualParentId],
+      function (err) {
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
+        res.status(201).json({
+          id: this.lastID,
+          user_id: req.user.id,
+          name: name.trim(),
+          parent_id: actualParentId,
+          sort_order: 0
+        });
       }
-      res.status(201).json({
-        id: this.lastID,
-        user_id: req.user.id,
-        name: name.trim(),
-        parent_id: parent_id || null,
-        sort_order: 0
-      });
-    }
-  );
+    );
+  };
+
+  if (parent_id) {
+    insertFolder(parent_id);
+  } else {
+    // If no parent_id specified, place under '즐겨찾기' root folder
+    db.get(
+      "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '즐겨찾기' AND parent_id IS NULL",
+      [req.user.id],
+      (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const favRootId = row ? row.id : null;
+        insertFolder(favRootId);
+      }
+    );
+  }
 });
 
 // Rename/Update Favorite Category
@@ -789,11 +1000,16 @@ app.put('/api/favorites/folders/:id', requireAuth, (req, res) => {
 
   // Verify the folder belongs to user
   db.get(
-    'SELECT id, name FROM favorite_categories WHERE id = ? AND user_id = ?',
+    'SELECT id, name, parent_id FROM favorite_categories WHERE id = ? AND user_id = ?',
     [folderId, req.user.id],
     (err, row) => {
       if (err) return res.status(500).json({ error: err.message });
       if (!row) return res.status(404).json({ error: '폴더를 찾을 수 없거나 권한이 없습니다.' });
+
+      // Guard: Prevent modifications to root folders ('즐겨찾기', '독서 완료')
+      if (row.parent_id === null && (row.name === '즐겨찾기' || row.name === '독서 완료')) {
+        return res.status(400).json({ error: '기본 루트 카테고리는 수정할 수 없습니다.' });
+      }
 
       db.run(
         `UPDATE favorite_categories 
@@ -815,16 +1031,23 @@ app.delete('/api/favorites/folders/:id', requireAuth, (req, res) => {
 
   // Verify the folder belongs to user
   db.get(
-    'SELECT id, name FROM favorite_categories WHERE id = ? AND user_id = ?',
+    'SELECT id, name, parent_id FROM favorite_categories WHERE id = ? AND user_id = ?',
     [folderId, req.user.id],
     (err, row) => {
       if (err) return res.status(500).json({ error: err.message });
       if (!row) return res.status(404).json({ error: '폴더를 찾을 수 없거나 권한이 없습니다.' });
 
-      // Determine default folder (oldest one)
+      // Guard: Prevent deleting root folders
+      if (row.parent_id === null && (row.name === '즐겨찾기' || row.name === '독서 완료')) {
+        return res.status(400).json({ error: '기본 루트 카테고리는 삭제할 수 없습니다.' });
+      }
+
+      // Determine default folder (oldest subfolder under '즐겨찾기' root)
       db.get(
-        "SELECT id FROM favorite_categories WHERE user_id = ? ORDER BY id ASC LIMIT 1",
-        [req.user.id],
+        `SELECT id FROM favorite_categories 
+         WHERE user_id = ? AND parent_id = (SELECT id FROM favorite_categories WHERE user_id = ? AND name = '즐겨찾기' AND parent_id IS NULL)
+         ORDER BY id ASC LIMIT 1`,
+        [req.user.id, req.user.id],
         (defaultFolderErr, defaultFolder) => {
           if (defaultFolderErr) return res.status(500).json({ error: defaultFolderErr.message });
           
@@ -906,9 +1129,12 @@ app.post('/api/favorites', requireAuth, (req, res) => {
         }
       );
     } else {
+      // Find default folder (oldest subfolder under '즐겨찾기' root)
       db.get(
-        "SELECT id FROM favorite_categories WHERE user_id = ? ORDER BY id ASC LIMIT 1",
-        [req.user.id],
+        `SELECT id FROM favorite_categories 
+         WHERE user_id = ? AND parent_id = (SELECT id FROM favorite_categories WHERE user_id = ? AND name = '즐겨찾기' AND parent_id IS NULL)
+         ORDER BY id ASC LIMIT 1`,
+        [req.user.id, req.user.id],
         (err, row) => {
           if (err) return res.status(500).json({ error: err.message });
           const defaultId = row ? row.id : null;
@@ -922,7 +1148,7 @@ app.post('/api/favorites', requireAuth, (req, res) => {
     db.run(
       `INSERT INTO favorites (user_id, book_id, category_id) 
        VALUES (?, ?, ?)
-       ON CONFLICT(user_id, book_id) DO UPDATE SET category_id = excluded.category_id`,
+       ON CONFLICT(user_id, book_id, category_id) DO NOTHING`,
       [req.user.id, book_id, catId],
       function (err) {
         if (err) {
@@ -941,42 +1167,65 @@ app.post('/api/favorites', requireAuth, (req, res) => {
   getCategoryAndInsert();
 });
 
-// Delete Book from Favorites (By Book ID)
+// Delete Book from Favorites (By Book ID and optionally Category ID)
 app.delete('/api/favorites/:bookId', requireAuth, (req, res) => {
   const bookId = req.params.bookId;
-  db.run(
-    'DELETE FROM favorites WHERE user_id = ? AND book_id = ?',
-    [req.user.id, bookId],
-    function (err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      if (this.changes === 0) {
-        return res.status(404).json({ error: '즐겨찾기 항목을 찾을 수 없습니다.' });
-      }
-      res.json({ message: '즐겨찾기에서 제거되었습니다.' });
+  const categoryId = req.query.category_id;
+
+  let sql = 'DELETE FROM favorites WHERE user_id = ? AND book_id = ?';
+  let params = [req.user.id, bookId];
+
+  if (categoryId) {
+    sql += ' AND category_id = ?';
+    params.push(categoryId);
+  }
+
+  db.run(sql, params, function (err) {
+    if (err) {
+      return res.status(500).json({ error: err.message });
     }
-  );
+    if (this.changes === 0) {
+      return res.status(404).json({ error: '항목을 찾을 수 없습니다.' });
+    }
+    
+    // Cleanup: if target category was inside "독서 완료" root and is now empty, delete it
+    if (categoryId) {
+      db.run(
+        `DELETE FROM favorite_categories 
+         WHERE user_id = ? AND parent_id = (SELECT id FROM favorite_categories WHERE user_id = ? AND name = '독서 완료' AND parent_id IS NULL)
+           AND id NOT IN (SELECT DISTINCT category_id FROM favorites WHERE user_id = ? AND category_id IS NOT NULL)`,
+        [req.user.id, req.user.id, req.user.id],
+        (cleanErr) => {
+          if (cleanErr) console.error('Failed to clean empty date folders:', cleanErr.message);
+          res.json({ message: '삭제되었습니다.' });
+        }
+      );
+    } else {
+      res.json({ message: '삭제되었습니다.' });
+    }
+  });
 });
 
 // Update Book's Category/Sort Order in Favorites
 app.put('/api/favorites/:bookId', requireAuth, (req, res) => {
   const bookId = req.params.bookId;
-  const { category_id, sort_order } = req.body;
+  const { category_id, source_category_id, sort_order } = req.body;
 
   const updateFavorite = (catId) => {
-    db.run(
-      `UPDATE favorites 
-       SET category_id = ?, sort_order = ? 
-       WHERE user_id = ? AND book_id = ?`,
-      [catId, sort_order || 0, req.user.id, bookId],
-      function (err) {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
-        res.json({ message: '즐겨찾기 정보가 수정되었습니다.' });
+    let sql = `UPDATE favorites SET category_id = ?, sort_order = ? WHERE user_id = ? AND book_id = ?`;
+    let params = [catId, sort_order || 0, req.user.id, bookId];
+
+    if (source_category_id) {
+      sql += ' AND category_id = ?';
+      params.push(source_category_id);
+    }
+
+    db.run(sql, params, function (err) {
+      if (err) {
+        return res.status(500).json({ error: err.message });
       }
-    );
+      res.json({ message: '즐겨찾기 정보가 수정되었습니다.' });
+    });
   };
 
   if (category_id) {
@@ -990,13 +1239,121 @@ app.put('/api/favorites/:bookId', requireAuth, (req, res) => {
       }
     );
   } else {
+    // Determine default folder (oldest subfolder under '즐겨찾기' root)
     db.get(
-      "SELECT id FROM favorite_categories WHERE user_id = ? ORDER BY id ASC LIMIT 1",
-      [req.user.id],
+      `SELECT id FROM favorite_categories 
+       WHERE user_id = ? AND parent_id = (SELECT id FROM favorite_categories WHERE user_id = ? AND name = '즐겨찾기' AND parent_id IS NULL)
+       ORDER BY id ASC LIMIT 1`,
+      [req.user.id, req.user.id],
       (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
         const defaultId = row ? row.id : null;
         updateFavorite(defaultId);
+      }
+    );
+  }
+});
+
+// Add Book to Read Completion List (Creates date folder YYYY.MM.DD under '독서 완료' root)
+app.post('/api/favorites/read', requireAuth, (req, res) => {
+  const { book_id, is_read } = req.body;
+  if (!book_id) {
+    return res.status(400).json({ error: '도서 ID가 누락되었습니다.' });
+  }
+
+  if (is_read) {
+    // 1. Get '독서 완료' root ID
+    db.get(
+      "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '독서 완료' AND parent_id IS NULL",
+      [req.user.id],
+      (err, readRoot) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!readRoot) return res.status(500).json({ error: '독서 완료 카테고리를 찾을 수 없습니다.' });
+
+        const readRootId = readRoot.id;
+
+        // 2. Generate YYYY.MM.DD date folder name
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const date = String(now.getDate()).padStart(2, '0');
+        const folderName = `${year}.${month}.${date}`;
+
+        // 3. Find or Create date folder under '독서 완료' root
+        db.get(
+          "SELECT id FROM favorite_categories WHERE user_id = ? AND name = ? AND parent_id = ?",
+          [req.user.id, folderName, readRootId],
+          (err2, folder) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+
+            if (folder) {
+              insertReadBook(folder.id);
+            } else {
+              db.run(
+                "INSERT INTO favorite_categories (user_id, name, parent_id) VALUES (?, ?, ?)",
+                [req.user.id, folderName, readRootId],
+                function (err3) {
+                  if (err3) return res.status(500).json({ error: err3.message });
+                  insertReadBook(this.lastID);
+                }
+              );
+            }
+          }
+        );
+      }
+    );
+
+    const insertReadBook = (catId) => {
+      db.run(
+        `INSERT INTO favorites (user_id, book_id, category_id) 
+         VALUES (?, ?, ?)
+         ON CONFLICT(user_id, book_id, category_id) DO NOTHING`,
+        [req.user.id, book_id, catId],
+        function (err) {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({
+            message: '읽음 완료 처리되었습니다.',
+            book_id,
+            category_id: catId
+          });
+        }
+      );
+    };
+  } else {
+    // is_read = false (Cancel read status)
+    // Find all '독서 완료' subfolders for this user and remove this book from them
+    db.all(
+      `SELECT id FROM favorite_categories 
+       WHERE user_id = ? AND parent_id = (SELECT id FROM favorite_categories WHERE user_id = ? AND name = '독서 완료' AND parent_id IS NULL)`,
+      [req.user.id, req.user.id],
+      (err, folders) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!folders || folders.length === 0) {
+          return res.json({ message: '읽음 완료가 취소되었습니다.' });
+        }
+
+        const folderIds = folders.map(f => f.id);
+        const placeholders = folderIds.map(() => '?').join(',');
+        
+        db.run(
+          `DELETE FROM favorites WHERE user_id = ? AND book_id = ? AND category_id IN (${placeholders})`,
+          [req.user.id, book_id, ...folderIds],
+          function (err2) {
+            if (err2) return res.status(500).json({ error: err2.message });
+            
+            // Clean up empty date folders under '독서 완료'
+            db.run(
+              `DELETE FROM favorite_categories 
+               WHERE user_id = ? AND parent_id = (SELECT id FROM favorite_categories WHERE user_id = ? AND name = '독서 완료' AND parent_id IS NULL)
+                 AND id NOT IN (SELECT DISTINCT category_id FROM favorites WHERE user_id = ? AND category_id IS NOT NULL)`,
+              [req.user.id, req.user.id, req.user.id],
+              (cleanErr) => {
+                if (cleanErr) console.error('Failed to clean empty date folders:', cleanErr.message);
+                res.json({ message: '읽음 완료가 취소되었습니다.' });
+              }
+            );
+          }
+        );
       }
     );
   }
