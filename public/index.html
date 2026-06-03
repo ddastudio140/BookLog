@@ -101,20 +101,22 @@
       <section class="results-section">
         
         <!-- Search Bar with Lookup Dropdown and Submit Button -->
-        <div class="search-wrapper">
-          <select id="search-type" class="search-type-select" aria-label="검색 유형">
-            <option value="all">전체</option>
-            <option value="title">도서명</option>
-            <option value="author">저자명</option>
-            <option value="publisher">출판사</option>
-            <option value="isbn">ISBN</option>
-          </select>
-          <div class="search-input-box">
-            <i class="fa-solid fa-magnifying-glass search-icon"></i>
-            <input type="text" id="search-input" placeholder="검색어를 입력하세요..." autocomplete="off">
-            <button id="search-clear-btn" class="hidden"><i class="fa-solid fa-xmark"></i></button>
+        <div class="search-outer-container">
+          <div class="search-wrapper">
+            <select id="search-type" class="search-type-select" aria-label="검색 유형">
+              <option value="all">전체</option>
+              <option value="title">도서명</option>
+              <option value="author">저자명</option>
+              <option value="publisher">출판사</option>
+              <option value="isbn">ISBN</option>
+            </select>
+            <div class="search-input-box">
+              <i class="fa-solid fa-magnifying-glass search-icon"></i>
+              <input type="text" id="search-input" placeholder="검색어를 입력하세요..." autocomplete="off">
+              <button id="search-clear-btn" class="hidden"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <button id="search-btn" class="search-submit-btn">검색</button>
           </div>
-          <button id="search-btn" class="search-submit-btn">검색</button>
           <!-- Favorites Toggle Button -->
           <button class="favorites-toggle-btn" id="btn-toggle-favorites-drawer" type="button">
             <i class="fa-solid fa-star"></i>
