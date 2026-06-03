@@ -1300,6 +1300,16 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.search-wrapper .favorites-toggle-btn {
+  border-radius: 9999px;
+  padding: 0.45rem 1.35rem;
+  box-shadow: none;
+  font-size: 0.85rem;
+  margin-right: 2px;
+  background-color: #f8fafc;
+  border: 1px solid var(--border-color);
+}
+
 .favorites-toggle-btn i {
   color: #fbbf24; /* Amber star */
   transition: transform var(--transition-fast);
