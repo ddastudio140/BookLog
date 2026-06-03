@@ -1,0 +1,19 @@
+{
+  "name": "book-recommendation-site",
+  "version": "1.0.0",
+  "description": "Book Recommendation Website using Excel data and SQLite database",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "import": "node db/import.js",
+    "fetch-covers": "node db/fetch_metadata.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "sqlite3": "^5.1.7",
+    "xlsx": "^0.18.5"
+  }
+}

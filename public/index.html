@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="사서 및 대학교 추천 도서 목록을 편리한 리스트로 확인하고 연령별, 대학별로 정교하게 필터링하세요. 모바일과 웹에서 완벽하게 작동하는 반응형 도서 추천 플랫폼입니다.">
+  <title>사서의 추천 도서 | 맞춤형 추천 도서 플랫폼</title>
+  <!-- Google Fonts & Font Awesome Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- App Container -->
+  <div class="app-container">
+    
+    <!-- Top Header -->
+    <header class="main-header">
+      <div class="header-logo" id="btn-reset-home">
+        <i class="fa-solid fa-book-open-reader brand-icon"></i>
+        <h1>사서의<span> 추천 도서</span></h1>
+      </div>
+
+      <!-- Mobile Menu Button -->
+      <button class="mobile-filter-toggle" id="btn-toggle-filters">
+        <i class="fa-solid fa-sliders"></i>
+        <span>필터</span>
+      </button>
+    </header>
+
+    <!-- Top Category Scrollbar Tabs Bar -->
+    <div class="category-bar">
+      <div class="category-tabs" id="category-tabs">
+        <!-- Dynamically populated category tab buttons -->
+        <button class="category-tab-btn active" data-category="">전체 도서</button>
+      </div>
+    </div>
+
+    <!-- Main Workspace Area -->
+    <main class="main-content">
+      
+      <!-- Sidebar Filter Panel -->
+      <aside class="filter-sidebar" id="filter-sidebar">
+        <div class="sidebar-header">
+          <h3>상세 필터</h3>
+          <button class="close-sidebar-btn" id="btn-close-sidebar"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        
+        <!-- Filter Groups -->
+        <div class="filter-groups-container">
+          <!-- Group 1: 추천 기관 (사서추천 vs 대학추천) -->
+          <div class="filter-group" id="filter-group-source">
+            <h4 class="filter-title">추천 출처 <i class="fa-solid fa-chevron-down"></i></h4>
+            <div class="filter-options" id="source-options-list">
+              <label class="checkbox-label">
+                <input type="checkbox" name="sourceType" value="사서추천">
+                <span>도서관 사서 추천</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" name="sourceType" value="대학추천">
+                <span>대학교 추천도서</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Group 2: 추천 대상 (연령별) (사서 추천용) -->
+          <div class="filter-group" id="filter-group-age">
+            <h4 class="filter-title">추천 대상 (연령별) <i class="fa-solid fa-chevron-down"></i></h4>
+            <div class="filter-options" id="age-options-list">
+              <div class="loading-spinner-sm"></div>
+            </div>
+          </div>
+
+          <!-- Group 4: 추천 기관 (도서관) (사서 추천용) -->
+          <div class="filter-group" id="filter-group-library">
+            <h4 class="filter-title">추천 기관 (도서관) <i class="fa-solid fa-chevron-down"></i></h4>
+            <div class="filter-options" id="library-options-list">
+              <div class="loading-spinner-sm"></div>
+            </div>
+          </div>
+
+          <!-- Group 3: 대학별 추천도서 (대학 추천용) -->
+          <div class="filter-group" id="filter-group-university">
+            <h4 class="filter-title">대학별 추천 목록 <i class="fa-solid fa-chevron-down"></i></h4>
+            <div class="filter-options" id="university-options-list">
+              <div class="loading-spinner-sm"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <button class="btn-clear-filters" id="btn-reset-filters">
+            <i class="fa-solid fa-rotate-left"></i> 필터 초기화
+          </button>
+        </div>
+      </aside>
+      
+      <!-- Book Results Display -->
+      <section class="results-section">
+        
+        <!-- Search Bar with Lookup Dropdown and Submit Button -->
+        <div class="search-wrapper">
+          <select id="search-type" class="search-type-select" aria-label="검색 유형">
+            <option value="all">전체</option>
+            <option value="title">도서명</option>
+            <option value="author">저자명</option>
+            <option value="publisher">출판사</option>
+            <option value="isbn">ISBN</option>
+          </select>
+          <div class="search-input-box">
+            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+            <input type="text" id="search-input" placeholder="검색어를 입력하세요..." autocomplete="off">
+            <button id="search-clear-btn" class="hidden"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <button id="search-btn" class="search-submit-btn">검색</button>
+        </div>
+
+        <div class="results-meta">
+          <span class="results-count">검색 결과: <strong id="total-count">0</strong>권</span>
+          <div class="results-actions">
+            <!-- Reset search/filters button -->
+            <button id="btn-reset-all" class="btn-secondary hidden">전체 초기화</button>
+          </div>
+        </div>
+
+        <!-- Books List Layout -->
+        <div class="books-list" id="books-list">
+          <!-- Dynamically populated with list rows -->
+        </div>
+
+        <!-- Pagination Controls -->
+        <div class="pagination-container" id="pagination-controls">
+          <!-- Dynamically populated -->
+        </div>
+      </section>
+    </main>
+
+    <!-- Detailed Book Information Modal -->
+    <div class="modal-overlay" id="book-detail-modal">
+      <div class="modal-card">
+        <button class="modal-close-btn" id="btn-close-modal"><i class="fa-solid fa-xmark"></i></button>
+        <div class="modal-content" id="modal-content-area">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <p>&copy; 2026 사서의 추천 도서. All rights reserved. 본 서비스는 도서관 사서 및 전국 대학 추천도서 데이터를 바탕으로 제공됩니다.</p>
+    </footer>
+    
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
