@@ -604,6 +604,7 @@ app.get('/api/books/:id', optionalAuth, (req, res) => {
     }
 
     res.json(row);
+  });
 });
 
 // ==========================================
