@@ -795,10 +795,6 @@ app.put('/api/favorites/folders/:id', requireAuth, (req, res) => {
       if (err) return res.status(500).json({ error: err.message });
       if (!row) return res.status(404).json({ error: '폴더를 찾을 수 없거나 권한이 없습니다.' });
 
-      if (row.name === '미분류') {
-        return res.status(400).json({ error: '기본 폴더는 이름을 변경할 수 없습니다.' });
-      }
-
       db.run(
         `UPDATE favorite_categories 
          SET name = ?, parent_id = ?, sort_order = ? 
@@ -825,16 +821,16 @@ app.delete('/api/favorites/folders/:id', requireAuth, (req, res) => {
       if (err) return res.status(500).json({ error: err.message });
       if (!row) return res.status(404).json({ error: '폴더를 찾을 수 없거나 권한이 없습니다.' });
 
-      if (row.name === '미분류') {
-        return res.status(400).json({ error: '기본 폴더는 삭제할 수 없습니다.' });
-      }
-
-      // We need to move all books under this folder to '미분류' folder
+      // Determine default folder (oldest one)
       db.get(
-        "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '미분류'",
+        "SELECT id FROM favorite_categories WHERE user_id = ? ORDER BY id ASC LIMIT 1",
         [req.user.id],
         (defaultFolderErr, defaultFolder) => {
           if (defaultFolderErr) return res.status(500).json({ error: defaultFolderErr.message });
+          
+          if (defaultFolder && defaultFolder.id === parseInt(folderId)) {
+            return res.status(400).json({ error: '기본 폴더는 삭제할 수 없습니다.' });
+          }
           
           const targetCategoryId = defaultFolder ? defaultFolder.id : null;
 
@@ -911,7 +907,7 @@ app.post('/api/favorites', requireAuth, (req, res) => {
       );
     } else {
       db.get(
-        "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '미분류'",
+        "SELECT id FROM favorite_categories WHERE user_id = ? ORDER BY id ASC LIMIT 1",
         [req.user.id],
         (err, row) => {
           if (err) return res.status(500).json({ error: err.message });
@@ -995,7 +991,7 @@ app.put('/api/favorites/:bookId', requireAuth, (req, res) => {
     );
   } else {
     db.get(
-      "SELECT id FROM favorite_categories WHERE user_id = ? AND name = '미분류'",
+      "SELECT id FROM favorite_categories WHERE user_id = ? ORDER BY id ASC LIMIT 1",
       [req.user.id],
       (err, row) => {
         if (err) return res.status(500).json({ error: err.message });

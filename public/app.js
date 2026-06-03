@@ -1070,6 +1070,9 @@ function renderFavoritesTree() {
       });
     }
 
+    const minFolderId = state.folders.length > 0 ? Math.min(...state.folders.map(f => f.id)) : -1;
+    const isDefaultFolder = folder.id === minFolderId;
+
     html += `
       <div class="tree-folder-group ${isOpen}" id="folder-group-${folder.id}">
         <div class="tree-folder-header" data-id="${folder.id}">
@@ -1079,12 +1082,12 @@ function renderFavoritesTree() {
             <span class="folder-name-text">${folder.name}</span>
             <span class="folder-count-badge">${folderBooks.length}</span>
           </div>
-          ${folder.name !== '미분류' ? `
-            <div class="tree-folder-actions">
-              <button class="btn-folder-action edit-folder" title="이름 수정" data-id="${folder.id}"><i class="fa-solid fa-pen-to-square"></i></button>
+          <div class="tree-folder-actions">
+            <button class="btn-folder-action edit-folder" title="이름 수정" data-id="${folder.id}"><i class="fa-solid fa-pen-to-square"></i></button>
+            ${!isDefaultFolder ? `
               <button class="btn-folder-action delete delete-folder" title="삭제" data-id="${folder.id}"><i class="fa-solid fa-folder-minus"></i></button>
-            </div>
-          ` : ''}
+            ` : ''}
+          </div>
         </div>
         <div class="tree-folder-books">
           ${booksHtml}
