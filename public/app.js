@@ -643,6 +643,16 @@ function renderBooksList(books) {
 
     html += `
       <div class="book-row ${readCompletedClass}" data-id="${book.id}">
+        <div class="book-action-buttons-container">
+          <!-- Favorite Star Toggle -->
+          <button class="book-favorite-btn ${favClass}" data-id="${book.id}" title="즐겨찾기">
+            <i class="${isFav ? 'fa-solid' : 'fa-regular'} fa-star"></i>
+          </button>
+          <!-- Read Status Toggle -->
+          <button class="book-read-btn ${readClass}" data-id="${book.id}" title="읽음 완료">
+            <i class="fa-solid fa-book-open"></i>
+          </button>
+        </div>
         <div class="book-cover-container">
           <div class="book-cover-fallback"><i class="fa-solid fa-book"></i></div>
           ${imgHtml}
@@ -651,16 +661,6 @@ function renderBooksList(books) {
           <div class="book-title-row">
             <div class="book-row-title-text-wrap">
               <h3 class="book-row-title" title="${book.title}">${book.title}</h3>
-            </div>
-            <div class="book-action-buttons-container">
-              <!-- Favorite Star Toggle -->
-              <button class="book-favorite-btn ${favClass}" data-id="${book.id}" title="즐겨찾기">
-                <i class="${isFav ? 'fa-solid' : 'fa-regular'} fa-star"></i>
-              </button>
-              <!-- Read Status Toggle -->
-              <button class="book-read-btn ${readClass}" data-id="${book.id}" title="읽음 완료">
-                <i class="fa-solid fa-book-open"></i>
-              </button>
             </div>
           </div>
           <div class="book-meta-details" style="margin-top: 0.25rem;">

@@ -1956,7 +1956,6 @@ body {
 /* Adjust title layout for favorite/read button positioning */
 .book-title-row {
   position: relative;
-  padding-right: 3.5rem; /* Room for both buttons */
 }
 
 .book-row-title-text-wrap {
@@ -1965,14 +1964,13 @@ body {
 }
 
 .book-action-buttons-container {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 10;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  z-index: 10;
 }
 
 /* Read Status styling */
