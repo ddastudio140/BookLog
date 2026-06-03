@@ -1053,8 +1053,9 @@ function renderFavoritesTree() {
           : `<div class="tree-book-cover-fallback"><i class="fa-solid fa-book"></i></div>`;
 
         booksHtml += `
-          <div class="tree-book-item" data-id="${fav.book_id}">
+          <div class="tree-book-item" data-id="${fav.book_id}" draggable="true">
             <div class="tree-book-info">
+              <i class="fa-solid fa-grip-vertical drag-handle" style="color: var(--text-muted); cursor: grab; margin-right: 0.4rem; font-size: 0.85rem;"></i>
               ${coverHtml}
               <div class="tree-book-details">
                 <span class="tree-book-title" title="${fav.title}">${fav.title}</span>
@@ -1062,7 +1063,6 @@ function renderFavoritesTree() {
               </div>
             </div>
             <div class="tree-book-actions">
-              <button class="btn-book-action move-category" title="폴더 이동" data-id="${fav.book_id}"><i class="fa-solid fa-arrows-spin"></i></button>
               <button class="btn-book-action unfavorite" title="즐겨찾기 해제" data-id="${fav.book_id}"><i class="fa-solid fa-trash-can"></i></button>
             </div>
           </div>
@@ -1074,7 +1074,7 @@ function renderFavoritesTree() {
     const isDefaultFolder = folder.id === minFolderId;
 
     html += `
-      <div class="tree-folder-group ${isOpen}" id="folder-group-${folder.id}">
+      <div class="tree-folder-group ${isOpen}" id="folder-group-${folder.id}" data-folder-id="${folder.id}">
         <div class="tree-folder-header" data-id="${folder.id}">
           <div class="tree-folder-title-box">
             <span class="folder-arrow-icon"><i class="fa-solid fa-chevron-right"></i></span>
@@ -1101,6 +1101,7 @@ function renderFavoritesTree() {
 }
 
 function setupFavoritesTreeEvents() {
+  // Toggle folder expansion
   favoritesTreeContainer.querySelectorAll('.tree-folder-header').forEach(header => {
     header.addEventListener('click', (e) => {
       if (e.target.closest('.tree-folder-actions')) return;
@@ -1111,6 +1112,7 @@ function setupFavoritesTreeEvents() {
     });
   });
 
+  // Edit folder name
   favoritesTreeContainer.querySelectorAll('.edit-folder').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1141,6 +1143,7 @@ function setupFavoritesTreeEvents() {
     });
   });
 
+  // Delete folder
   favoritesTreeContainer.querySelectorAll('.delete-folder').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1163,13 +1166,15 @@ function setupFavoritesTreeEvents() {
     });
   });
 
+  // Book row click in tree drawer
   favoritesTreeContainer.querySelectorAll('.tree-book-item').forEach(item => {
     item.addEventListener('click', (e) => {
-      if (e.target.closest('.tree-book-actions')) return;
+      if (e.target.closest('.tree-book-actions') || e.target.closest('.drag-handle')) return;
       openBookDetail(item.dataset.id);
     });
   });
 
+  // Unfavorite button click in tree drawer
   favoritesTreeContainer.querySelectorAll('.unfavorite').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1178,22 +1183,47 @@ function setupFavoritesTreeEvents() {
     });
   });
 
-  favoritesTreeContainer.querySelectorAll('.move-category').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const bookId = btn.dataset.id;
+  // HTML5 DRAG & DROP BINDINGS
+  
+  // Drag start for book elements
+  favoritesTreeContainer.querySelectorAll('.tree-book-item').forEach(bookEl => {
+    bookEl.addEventListener('dragstart', (e) => {
+      bookEl.classList.add('dragging');
+      e.dataTransfer.setData('text/plain', bookEl.dataset.id);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    bookEl.addEventListener('dragend', () => {
+      bookEl.classList.remove('dragging');
+    });
+  });
+
+  // Drag over and Drop for folder targets
+  favoritesTreeContainer.querySelectorAll('.tree-folder-group').forEach(folderEl => {
+    folderEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      folderEl.classList.add('drag-over');
+    });
+
+    folderEl.addEventListener('dragleave', () => {
+      folderEl.classList.remove('drag-over');
+    });
+
+    folderEl.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      folderEl.classList.remove('drag-over');
       
-      const folderOptions = state.folders.map((f, i) => `${i + 1}. ${f.name}`).join('\n');
-      const selectionText = prompt(`이동할 폴더 번호를 입력해 주세요:\n\n${folderOptions}`);
-      if (!selectionText) return;
+      const bookId = e.dataTransfer.getData('text/plain');
+      const targetFolderId = folderEl.dataset.folderId;
       
-      const index = parseInt(selectionText.trim()) - 1;
-      if (isNaN(index) || index < 0 || index >= state.folders.length) {
-        alert('올바른 폴더 번호를 입력해 주세요.');
-        return;
+      if (!bookId || !targetFolderId) return;
+
+      const fav = state.favorites.find(f => f.book_id === parseInt(bookId));
+      if (fav && fav.category_id === parseInt(targetFolderId)) {
+        return; // Already in target folder
       }
-      
-      const targetFolder = state.folders[index];
+
       try {
         const res = await fetch(`/api/favorites/${bookId}`, {
           method: 'PUT',
@@ -1201,13 +1231,13 @@ function setupFavoritesTreeEvents() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${state.token}`
           },
-          body: JSON.stringify({ category_id: targetFolder.id })
+          body: JSON.stringify({ category_id: parseInt(targetFolderId) })
         });
         if (!res.ok) {
           const data = await res.json();
           throw new Error(data.error || '폴더 이동 실패');
         }
-        fetchFavoritesAndFolders();
+        await fetchFavoritesAndFolders();
       } catch (err) {
         alert(err.message);
       }

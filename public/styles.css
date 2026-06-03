@@ -2025,3 +2025,41 @@ body {
   }
 }
 
+/* ==========================================
+   HTML5 DRAG & DROP STYLING
+   ========================================== */
+.tree-book-item.dragging {
+  opacity: 0.45;
+  border: 1px dashed var(--primary) !important;
+  background-color: var(--bg-row-hover);
+}
+
+.tree-folder-group.drag-over {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 12px rgba(234, 88, 12, 0.15);
+  transform: scale(1.01);
+  transition: all var(--transition-fast);
+}
+
+.tree-folder-group.drag-over .tree-folder-header {
+  background-color: var(--primary-glow) !important;
+}
+
+.drag-handle {
+  cursor: grab;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background-color var(--transition-fast);
+}
+
+.drag-handle:hover {
+  background-color: #f1f5f9;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
