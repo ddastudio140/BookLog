@@ -15,9 +15,12 @@ function findColumnIndices(headers) {
     if (h === undefined || h === null) return;
     const str = h.toString().trim().replace(/\s+/g, '');
     
-    if (str.includes('번호') || str === '순번' || str === 'No') {
-      map.id = index;
-    } else if (str.includes('도서명') || str.includes('서명') || str.includes('책명') || str.includes('책제목')) {
+    if (str === '순번' || str === 'No' || str === '순위' || str === '랭킹' || str === '번호' || str === '순위번호') {
+      map.ranking = index;
+      if (str === '번호' || str === '순번' || str === 'No') {
+        map.id = index;
+      }
+    } else if (str.includes('도서명') || str.includes('서명') || str.includes('책명') || str.includes('책제목') || str.includes('상품명')) {
       map.title = index;
     } else if (str.includes('저자') || str.includes('글저자') || str.includes('작가') || str.includes('지은이')) {
       map.author = index;
@@ -35,7 +38,7 @@ function findColumnIndices(headers) {
       map.recommendation_month = index;
     } else if (str.includes('주제구분') || str.includes('구분') || str.includes('분류') || str.includes('카테고리') || str.includes('대상') || str.includes('분야')) {
       map.category = index;
-    } else if (str.includes('추천사유') || str.includes('소개') || str.includes('추천평') || str.includes('도서소개') || str.includes('테마')) {
+    } else if (str.includes('추천사유') || str.includes('소개') || str.includes('추천평') || str.includes('도서소개') || str.includes('테마') || str.includes('설명')) {
       map.description = index;
     }
   });
@@ -44,6 +47,7 @@ function findColumnIndices(headers) {
 
 const coverCache = new Map();
 const summaryCache = new Map();
+const insertedIsbns = new Set();
 
 function importExcelFile(filePath, sourceType, sourceSubtype) {
   return new Promise((resolve, reject) => {
@@ -86,8 +90,8 @@ function importExcelFile(filePath, sourceType, sourceSubtype) {
         const stmt = db.prepare(`
           INSERT INTO books (
             source_type, source_subtype, title, author, publisher, pub_year, 
-            isbn, call_number, price, recommendation_month, category, description, image_url, summary
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            isbn, call_number, price, recommendation_month, category, description, image_url, summary, ranking
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         let insertedCount = 0;
@@ -104,10 +108,18 @@ function importExcelFile(filePath, sourceType, sourceSubtype) {
           const title = getValue(colMap.title);
           if (!title) continue; // Skip rows without title
 
+          const isbn = getValue(colMap.isbn);
+          if (isbn) {
+            const key = `${sourceType}|${sourceSubtype}|${isbn}`;
+            if (insertedIsbns.has(key)) {
+              continue; // Skip duplicate ISBN in the same category
+            }
+            insertedIsbns.add(key);
+          }
+
           const author = getValue(colMap.author);
           const publisher = getValue(colMap.publisher);
           const pub_year = getValue(colMap.pub_year);
-          const isbn = getValue(colMap.isbn);
           const call_number = getValue(colMap.call_number);
           const price = getValue(colMap.price);
           const recommendation_month = getValue(colMap.recommendation_month);
@@ -115,6 +127,9 @@ function importExcelFile(filePath, sourceType, sourceSubtype) {
           const description = getValue(colMap.description);
           const imageUrl = coverCache.get(isbn) || null;
           const summary = summaryCache.get(isbn) || null;
+          
+          const rankingVal = getValue(colMap.ranking);
+          const ranking = rankingVal ? parseInt(rankingVal.replace(/[^0-9]/g, '')) : null;
 
           stmt.run([
             sourceType,
@@ -130,7 +145,8 @@ function importExcelFile(filePath, sourceType, sourceSubtype) {
             category,
             description,
             imageUrl,
-            summary
+            summary,
+            ranking
           ]);
           insertedCount++;
         }
@@ -236,6 +252,33 @@ async function main() {
       }
     } else {
       console.log('No university directory found.');
+    }
+
+    // 4. Scan and import Bestseller Books
+    const bestsellerDir = path.resolve(rootDir, '베스트셀러');
+    if (fs.existsSync(bestsellerDir)) {
+      // 4a. Age-based bestsellers
+      const ageDir = path.join(bestsellerDir, '연령');
+      if (fs.existsSync(ageDir)) {
+        const ageFiles = fs.readdirSync(ageDir).filter(f => f.endsWith('.xlsx'));
+        for (const file of ageFiles) {
+          const filePath = path.join(ageDir, file);
+          const subtype = path.basename(file, '.xlsx'); // "유아", "어린이", "청소년"
+          await importExcelFile(filePath, '베스트셀러', subtype);
+        }
+      }
+      
+      // 4b. Comprehensive bestsellers
+      const generalDir = path.join(bestsellerDir, '종합');
+      if (fs.existsSync(generalDir)) {
+        const generalFiles = fs.readdirSync(generalDir).filter(f => f.endsWith('.xlsx'));
+        for (const file of generalFiles) {
+          const filePath = path.join(generalDir, file);
+          await importExcelFile(filePath, '베스트셀러', '종합');
+        }
+      }
+    } else {
+      console.log('No 베스트셀러 directory found.');
     }
 
     console.log('\n=======================================');

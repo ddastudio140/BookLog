@@ -5,6 +5,7 @@ const state = {
   age: '',             // Selected target age group (사서추천 subtype)
   library: '',         // Selected library institution (사서추천 subtype)
   university: '',      // Selected university (대학추천 subtype)
+  bestseller: '',      // Selected bestseller category (베스트셀러 subtype)
   category: '',        // Selected KDC category (from top tabs)
   page: 1,
   limit: 15,
@@ -36,6 +37,8 @@ const modalContentArea = document.getElementById('modal-content-area');
 const btnResetHome = document.getElementById('btn-reset-home');
 const categoryTabsContainer = document.getElementById('category-tabs');
 const sourceOptionsList = document.getElementById('source-options-list');
+const bestsellerGroup = document.getElementById('filter-group-bestseller');
+const bestsellerContainer = document.getElementById('bestseller-options-list');
 
 // Favorites Drawer DOM Elements
 const btnToggleFavoritesDrawer = document.getElementById('btn-toggle-favorites-drawer');
@@ -131,9 +134,9 @@ function setupEventListeners() {
     filterSidebar.classList.remove('active');
   });
 
-  // Close sidebar drawer on backdrop click in mobile
+  // Close sidebar drawer on backdrop click in mobile/tablet
   document.addEventListener('click', (e) => {
-    if (window.innerWidth <= 768) {
+    if (window.innerWidth <= 1024) {
       if (!filterSidebar.contains(e.target) && !btnToggleFilters.contains(e.target) && filterSidebar.classList.contains('active')) {
         filterSidebar.classList.remove('active');
       }
@@ -153,6 +156,7 @@ function setupEventListeners() {
         state.library = '';
       }
       if (!state.sourceTypes.includes('대학추천')) state.university = '';
+      if (!state.sourceTypes.includes('베스트셀러')) state.bestseller = '';
       
       state.page = 1;
       renderFilters();
@@ -166,6 +170,7 @@ function setupEventListeners() {
     state.age = '';
     state.library = '';
     state.university = '';
+    state.bestseller = '';
     state.page = 1;
     
     // Clear DOM checkboxes for sources
@@ -312,6 +317,7 @@ function resetAll() {
   state.age = '';
   state.library = '';
   state.university = '';
+  state.bestseller = '';
   state.category = '';
   state.page = 1;
 
@@ -334,7 +340,7 @@ function resetAll() {
   renderFilters();
   fetchBooks();
   
-  if (window.innerWidth <= 768) {
+  if (window.innerWidth <= 1024) {
     filterSidebar.classList.remove('active');
   }
 }
@@ -396,6 +402,7 @@ function renderFilters() {
   // Decide sidebar filter widgets visibility based on checked source checkboxes
   const showLib = state.sourceTypes.length === 0 || state.sourceTypes.includes('사서추천');
   const showUniv = state.sourceTypes.length === 0 || state.sourceTypes.includes('대학추천');
+  const showBestseller = state.sourceTypes.length === 0 || state.sourceTypes.includes('베스트셀러');
 
   if (showLib) {
     ageGroup.classList.remove('hidden');
@@ -409,6 +416,12 @@ function renderFilters() {
     univGroup.classList.remove('hidden');
   } else {
     univGroup.classList.add('hidden');
+  }
+
+  if (showBestseller) {
+    bestsellerGroup.classList.remove('hidden');
+  } else {
+    bestsellerGroup.classList.add('hidden');
   }
   
   const ageSubtypes = ['유아', '초저', '초고', '청소년'];
@@ -445,11 +458,31 @@ function renderFilters() {
     univHtml += createCheckboxRow('university', sub, checked);
   });
   univContainer.innerHTML = univHtml;
+
+  // 3. Render Bestsellers (베스트셀러 분류: 종합, 유아, 어린이, 청소년)
+  let bestsellerHtml = '';
+  const bestsellerOrder = ['종합', '유아', '어린이', '청소년'];
+  const dbBestsellerSubtypes = state.filters.subtypes['베스트셀러'] || [];
+  
+  bestsellerOrder.forEach(sub => {
+    if (dbBestsellerSubtypes.includes(sub)) {
+      const checked = state.bestseller === sub ? 'checked' : '';
+      bestsellerHtml += createCheckboxRow('bestseller', sub, checked);
+    }
+  });
+  dbBestsellerSubtypes.forEach(sub => {
+    if (!bestsellerOrder.includes(sub)) {
+      const checked = state.bestseller === sub ? 'checked' : '';
+      bestsellerHtml += createCheckboxRow('bestseller', sub, checked);
+    }
+  });
+  bestsellerContainer.innerHTML = bestsellerHtml;
   
   // Setup toggle single-select filters click handlers
   setupFilterClickHandlers(ageContainer, 'age');
   setupFilterClickHandlers(libContainer, 'library');
   setupFilterClickHandlers(univContainer, 'university');
+  setupFilterClickHandlers(bestsellerContainer, 'bestseller');
 }
 
 // Checkbox input row HTML generator
@@ -478,26 +511,68 @@ function setupFilterClickHandlers(container, filterKey) {
           if (other !== e.target) other.checked = false;
         });
         
-        // Mutually exclusive clearing across age, library, and university
+        // Clear other sub-filters, but preserve parent sources
         if (filterKey === 'age') {
           state.library = '';
           state.university = '';
+          state.bestseller = '';
           document.querySelectorAll('input[name="library"]').forEach(c => c.checked = false);
           document.querySelectorAll('input[name="university"]').forEach(c => c.checked = false);
+          document.querySelectorAll('input[name="bestseller"]').forEach(c => c.checked = false);
+          
+          if (!state.sourceTypes.includes('사서추천')) {
+            state.sourceTypes.push('사서추천');
+          }
+          sourceOptionsList.querySelectorAll('input[name="sourceType"]').forEach(c => {
+            if (c.value === '사서추천') c.checked = true;
+          });
         } else if (filterKey === 'library') {
           state.age = '';
           state.university = '';
+          state.bestseller = '';
           document.querySelectorAll('input[name="age"]').forEach(c => c.checked = false);
           document.querySelectorAll('input[name="university"]').forEach(c => c.checked = false);
+          document.querySelectorAll('input[name="bestseller"]').forEach(c => c.checked = false);
+          
+          if (!state.sourceTypes.includes('사서추천')) {
+            state.sourceTypes.push('사서추천');
+          }
+          sourceOptionsList.querySelectorAll('input[name="sourceType"]').forEach(c => {
+            if (c.value === '사서추천') c.checked = true;
+          });
         } else if (filterKey === 'university') {
           state.age = '';
           state.library = '';
+          state.bestseller = '';
           document.querySelectorAll('input[name="age"]').forEach(c => c.checked = false);
           document.querySelectorAll('input[name="library"]').forEach(c => c.checked = false);
+          document.querySelectorAll('input[name="bestseller"]').forEach(c => c.checked = false);
+          
+          if (!state.sourceTypes.includes('대학추천')) {
+            state.sourceTypes.push('대학추천');
+          }
+          sourceOptionsList.querySelectorAll('input[name="sourceType"]').forEach(c => {
+            if (c.value === '대학추천') c.checked = true;
+          });
+        } else if (filterKey === 'bestseller') {
+          state.age = '';
+          state.library = '';
+          state.university = '';
+          document.querySelectorAll('input[name="age"]').forEach(c => c.checked = false);
+          document.querySelectorAll('input[name="library"]').forEach(c => c.checked = false);
+          document.querySelectorAll('input[name="university"]').forEach(c => c.checked = false);
+          
+          if (!state.sourceTypes.includes('베스트셀러')) {
+            state.sourceTypes.push('베스트셀러');
+          }
+          sourceOptionsList.querySelectorAll('input[name="sourceType"]').forEach(c => {
+            if (c.value === '베스트셀러') c.checked = true;
+          });
         }
       }
       
       state.page = 1;
+      renderFilters(); // Re-render filters to update visibility based on new sourceTypes
       fetchBooks();
     });
   });
@@ -508,7 +583,7 @@ async function fetchBooks() {
   booksListContainer.innerHTML = '<div class="loading-spinner"></div>';
   
   // Toggle reset button visibility
-  if (state.search || state.sourceTypes.length > 0 || state.age || state.library || state.university || state.category) {
+  if (state.search || state.sourceTypes.length > 0 || state.age || state.library || state.university || state.bestseller || state.category) {
     btnResetAll.classList.remove('hidden');
   } else {
     btnResetAll.classList.add('hidden');
@@ -524,22 +599,15 @@ async function fetchBooks() {
     });
     
     // Choose appropriate sourceType parameter
-    if (state.sourceTypes.length === 1) {
-      params.append('sourceType', state.sourceTypes[0]);
+    if (state.sourceTypes.length > 0) {
+      params.append('sourceType', state.sourceTypes.join(','));
     }
     
     // Choose appropriate subtype parameter
-    if (state.sourceTypes.includes('사서추천') && !state.sourceTypes.includes('대학추천')) {
-      if (state.age) params.append('subtype', state.age);
-      else if (state.library) params.append('subtype', state.library);
-    } else if (state.sourceTypes.includes('대학추천') && !state.sourceTypes.includes('사서추천')) {
-      if (state.university) params.append('subtype', state.university);
-    } else {
-      // If both or neither are checked
-      if (state.age) params.append('subtype', state.age);
-      else if (state.library) params.append('subtype', state.library);
-      else if (state.university) params.append('subtype', state.university);
-    }
+    if (state.age) params.append('subtype', state.age);
+    else if (state.library) params.append('subtype', state.library);
+    else if (state.university) params.append('subtype', state.university);
+    else if (state.bestseller) params.append('subtype', state.bestseller);
     
     const res = await fetch(`/api/books?${params.toString()}`);
     if (!res.ok) throw new Error('API server returned error');
@@ -589,8 +657,12 @@ function renderBooksList(books) {
 
   let html = '';
   books.forEach(book => {
-    const isLibrarian = book.source_type === '사서추천';
-    const sourceClass = isLibrarian ? 'badge-source-lib' : 'badge-source-univ';
+    let sourceClass = 'badge-source-lib';
+    if (book.source_type === '대학추천') {
+      sourceClass = 'badge-source-univ';
+    } else if (book.source_type === '베스트셀러') {
+      sourceClass = 'badge-source-best';
+    }
     
     const author = book.author || '저자 미상';
     const publisher = book.publisher || '출판사 미상';
@@ -688,10 +760,10 @@ function renderBooksList(books) {
 
   // Read toggle click handler
   booksListContainer.querySelectorAll('.book-read-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const bookId = btn.dataset.id;
-      handleToggleReadBook(bookId);
+      await handleToggleReadBook(bookId);
     });
   });
 }
@@ -759,7 +831,12 @@ async function openBookDetail(id) {
     
     const book = await res.json();
     const isLibrarian = book.source_type === '사서추천';
-    const sourceClass = isLibrarian ? 'badge-source-lib' : 'badge-source-univ';
+    let sourceClass = 'badge-source-lib';
+    if (book.source_type === '대학추천') {
+      sourceClass = 'badge-source-univ';
+    } else if (book.source_type === '베스트셀러') {
+      sourceClass = 'badge-source-best';
+    }
     
     // Check if book cover exists (scraped vs custom premium CSS cover)
     const hasImage = book.image_url && book.image_url !== 'failed';
@@ -816,9 +893,21 @@ async function openBookDetail(id) {
 
     let descriptionSection = '';
     
-    // 도서 소개 및 줄거리 요약 (알라딘/Yes24 크롤링 데이터)
+    // 1. 추천 사유 / 도서 소개 (엑셀 입력 데이터)
+    const cleanDesc = book.description ? book.description.trim() : '';
+    if (cleanDesc && cleanDesc !== '') {
+      const descTitle = isLibrarian ? '사서 추천사유' : '도서 소개';
+      descriptionSection += `
+        <div class="modal-section" style="margin-bottom: 1.25rem;">
+          <h4><i class="fa-solid fa-comment-dots"></i> ${descTitle}</h4>
+          <div class="modal-description-box" style="background-color: #f8fafc; border-color: var(--border-color); font-size: 0.88rem; line-height: 1.6;">${cleanDesc}</div>
+        </div>
+      `;
+    }
+    
+    // 2. 줄거리 요약 (알라딘/Yes24 크롤링 데이터)
     const cleanSummary = book.summary ? book.summary.trim() : '';
-    if (cleanSummary && cleanSummary !== 'failed' && cleanSummary !== '') {
+    if (cleanSummary && cleanSummary !== 'failed' && cleanSummary !== '' && cleanSummary !== cleanDesc) {
       descriptionSection += `
         <div class="modal-section">
           <h4><i class="fa-solid fa-book-open"></i> 도서 소개 및 줄거리 요약</h4>
@@ -874,16 +963,11 @@ async function openBookDetail(id) {
     modalFavBtn.addEventListener('click', async () => {
       const bookId = modalFavBtn.dataset.id;
       await handleToggleFavorite(bookId);
-      const isFavNow = state.favorites.some(f => f.book_id === parseInt(bookId));
-      modalFavBtn.classList.toggle('active', isFavNow);
-      modalFavBtn.querySelector('i').className = isFavNow ? 'fa-solid fa-star' : 'fa-regular fa-star';
     });
 
-    modalReadBtn.addEventListener('click', () => {
+    modalReadBtn.addEventListener('click', async () => {
       const bookId = modalReadBtn.dataset.id;
-      handleToggleReadBook(bookId);
-      const isReadNow = state.readBooks.includes(parseInt(bookId));
-      modalReadBtn.classList.toggle('active', isReadNow);
+      await handleToggleReadBook(bookId);
     });
     
   } catch (error) {
@@ -929,7 +1013,7 @@ function updateAuthUI() {
     // 2) main-header 우측에 로그아웃 버튼
     headerRightArea.innerHTML = `
       <button class="btn-logout" id="btn-logout">
-        <i class="fa-solid fa-right-from-bracket"></i> 로그아웃
+        <i class="fa-solid fa-right-from-bracket"></i> <span>로그아웃</span>
       </button>
     `;
     document.getElementById('btn-logout').addEventListener('click', handleLogout);
@@ -1275,7 +1359,7 @@ function setupFavoritesTreeEvents() {
           throw new Error(data.error || '삭제 실패');
         }
         await fetchFavoritesAndFolders();
-        fetchBooks();
+        syncBookUIState(bookId);
       } catch (err) {
         alert(err.message);
       }
@@ -1349,19 +1433,89 @@ function setupFavoritesTreeEvents() {
   });
 }
 
+// Sync UI elements of a specific book across lists and modals to match current state
+function syncBookUIState(bookId) {
+  const parsedId = parseInt(bookId);
+  
+  // Find if this book is in the Favorites folder root hierarchy
+  const favRoot = state.folders.find(f => f.name === '즐겨찾기' && f.parent_id === null);
+  const favFolderIds = favRoot ? state.folders.filter(f => f.parent_id === favRoot.id).map(f => f.id) : [];
+  
+  const isFav = state.favorites.some(f => f.book_id === parsedId && favFolderIds.includes(f.category_id));
+  const isRead = state.readBooks.includes(parsedId);
+  
+  // Update main list favorite buttons
+  const favBtns = booksListContainer.querySelectorAll(`.book-favorite-btn[data-id="${bookId}"]`);
+  favBtns.forEach(btn => {
+    btn.classList.toggle('active', isFav);
+    const icon = btn.querySelector('i');
+    if (icon) {
+      icon.className = isFav ? 'fa-solid fa-star' : 'fa-regular fa-star';
+    }
+  });
+
+  // Update main list read buttons & row containers
+  const readBtns = booksListContainer.querySelectorAll(`.book-read-btn[data-id="${bookId}"]`);
+  readBtns.forEach(btn => {
+    btn.classList.toggle('active', isRead);
+  });
+
+  const rows = booksListContainer.querySelectorAll(`.book-row[data-id="${bookId}"]`);
+  rows.forEach(row => {
+    row.classList.toggle('read-completed', isRead);
+  });
+
+  // Update modal buttons if open and matching
+  const modalFavBtn = document.querySelector(`.modal-fav-btn[data-id="${bookId}"]`);
+  if (modalFavBtn) {
+    modalFavBtn.classList.toggle('active', isFav);
+    const icon = modalFavBtn.querySelector('i');
+    if (icon) {
+      icon.className = isFav ? 'fa-solid fa-star' : 'fa-regular fa-star';
+    }
+  }
+
+  const modalReadBtn = document.querySelector(`.modal-read-btn[data-id="${bookId}"]`);
+  if (modalReadBtn) {
+    modalReadBtn.classList.toggle('active', isRead);
+  }
+}
+
 async function handleToggleFavorite(bookId, forceDelete = false) {
   if (!state.user) {
     showAuthModal();
     return;
   }
 
+  const parsedId = parseInt(bookId);
   // Find if this book is in the Favorites folder root hierarchy
   const favRoot = state.folders.find(f => f.name === '즐겨찾기' && f.parent_id === null);
   const favFolderIds = favRoot ? state.folders.filter(f => f.parent_id === favRoot.id).map(f => f.id) : [];
   
-  const isFav = state.favorites.some(f => f.book_id === parseInt(bookId) && favFolderIds.includes(f.category_id));
-  const mapping = state.favorites.find(f => f.book_id === parseInt(bookId) && favFolderIds.includes(f.category_id));
+  const isFav = state.favorites.some(f => f.book_id === parsedId && favFolderIds.includes(f.category_id));
+  const mapping = state.favorites.find(f => f.book_id === parsedId && favFolderIds.includes(f.category_id));
   const categoryToDelete = mapping ? mapping.category_id : null;
+
+  // Optimistic UI update
+  const willBeFav = !isFav && !forceDelete;
+  
+  // Set UI state immediately
+  const favBtns = booksListContainer.querySelectorAll(`.book-favorite-btn[data-id="${bookId}"]`);
+  favBtns.forEach(btn => {
+    btn.classList.toggle('active', willBeFav);
+    const icon = btn.querySelector('i');
+    if (icon) {
+      icon.className = willBeFav ? 'fa-solid fa-star' : 'fa-regular fa-star';
+    }
+  });
+  const modalFavBtn = document.querySelector(`.modal-fav-btn[data-id="${bookId}"]`);
+  if (modalFavBtn) {
+    modalFavBtn.classList.toggle('active', willBeFav);
+    const icon = modalFavBtn.querySelector('i');
+    if (icon) {
+      icon.className = willBeFav ? 'fa-solid fa-star' : 'fa-regular fa-star';
+    }
+  }
 
   try {
     if (isFav || forceDelete) {
@@ -1380,15 +1534,17 @@ async function handleToggleFavorite(bookId, forceDelete = false) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${state.token}`
         },
-        body: JSON.stringify({ book_id: parseInt(bookId) })
+        body: JSON.stringify({ book_id: parsedId })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '즐겨찾기 추가 실패');
     }
     
     await fetchFavoritesAndFolders();
-    fetchBooks();
+    syncBookUIState(bookId);
   } catch (err) {
+    // Revert optimistic update
+    syncBookUIState(bookId);
     alert(err.message);
   }
 }
@@ -1401,7 +1557,22 @@ async function handleToggleReadBook(bookId) {
 
   const parsedId = parseInt(bookId);
   const isRead = state.readBooks.includes(parsedId);
-  
+  const willBeRead = !isRead;
+
+  // Optimistic UI update
+  const readBtns = booksListContainer.querySelectorAll(`.book-read-btn[data-id="${bookId}"]`);
+  readBtns.forEach(btn => {
+    btn.classList.toggle('active', willBeRead);
+  });
+  const rows = booksListContainer.querySelectorAll(`.book-row[data-id="${bookId}"]`);
+  rows.forEach(row => {
+    row.classList.toggle('read-completed', willBeRead);
+  });
+  const modalReadBtn = document.querySelector(`.modal-read-btn[data-id="${bookId}"]`);
+  if (modalReadBtn) {
+    modalReadBtn.classList.toggle('active', willBeRead);
+  }
+
   try {
     const res = await fetch('/api/favorites/read', {
       method: 'POST',
@@ -1409,14 +1580,16 @@ async function handleToggleReadBook(bookId) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${state.token}`
       },
-      body: JSON.stringify({ book_id: parsedId, is_read: !isRead })
+      body: JSON.stringify({ book_id: parsedId, is_read: willBeRead })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '읽음 상태 변경 실패');
     
     await fetchFavoritesAndFolders();
-    fetchBooks();
+    syncBookUIState(bookId);
   } catch (err) {
+    // Revert optimistic update
+    syncBookUIState(bookId);
     alert(err.message);
   }
 }

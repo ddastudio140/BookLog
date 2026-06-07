@@ -60,10 +60,14 @@
 
         <!-- Filter Groups -->
         <div class="filter-groups-container">
-          <!-- Group 1: 추천 기관 (사서추천 vs 대학추천) -->
+          <!-- Group 1: 추천 기관 (사서추천 vs 대학추천 vs 베스트셀러) -->
           <div class="filter-group" id="filter-group-source">
             <h4 class="filter-title">추천 출처 <i class="fa-solid fa-chevron-down"></i></h4>
             <div class="filter-options" id="source-options-list">
+              <label class="checkbox-label">
+                <input type="checkbox" name="sourceType" value="베스트셀러">
+                <span>베스트셀러</span>
+              </label>
               <label class="checkbox-label">
                 <input type="checkbox" name="sourceType" value="사서추천">
                 <span>도서관 사서 추천</span>
@@ -72,6 +76,14 @@
                 <input type="checkbox" name="sourceType" value="대학추천">
                 <span>대학교 추천도서</span>
               </label>
+            </div>
+          </div>
+
+          <!-- Group 5: 베스트셀러 분류 (베스트셀러용) -->
+          <div class="filter-group" id="filter-group-bestseller">
+            <h4 class="filter-title">베스트셀러 분류 <i class="fa-solid fa-chevron-down"></i></h4>
+            <div class="filter-options" id="bestseller-options-list">
+              <div class="loading-spinner-sm"></div>
             </div>
           </div>
 

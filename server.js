@@ -637,9 +637,17 @@ app.get('/api/books', optionalAuth, (req, res) => {
     }
 
     if (sourceType) {
-      sql += ' AND source_type = ?';
-      countSql += ' AND source_type = ?';
-      params.push(sourceType);
+      const sources = sourceType.split(',');
+      if (sources.length > 1) {
+        const placeholders = sources.map(() => '?').join(',');
+        sql += ` AND source_type IN (${placeholders})`;
+        countSql += ` AND source_type IN (${placeholders})`;
+        params.push(...sources);
+      } else {
+        sql += ' AND source_type = ?';
+        countSql += ' AND source_type = ?';
+        params.push(sourceType);
+      }
     }
 
     if (subtype) {
@@ -654,8 +662,12 @@ app.get('/api/books', optionalAuth, (req, res) => {
       params.push(category);
     }
 
-    // Order alphabetically by title
-    sql += ' ORDER BY title ASC LIMIT ? OFFSET ?';
+    // Order strictly by ranking if bestseller, otherwise alphabetically by title
+    if (sourceType === '베스트셀러') {
+      sql += ' ORDER BY ranking ASC LIMIT ? OFFSET ?';
+    } else {
+      sql += ' ORDER BY title ASC LIMIT ? OFFSET ?';
+    }
     
     // Binding parameters
     const queryParams = (req.user && favRootId && readRootId) 

@@ -41,6 +41,7 @@ db.serialize(() => {
       description TEXT,                   -- 추천사유 / 책소개
       image_url TEXT,                     -- 도서 표지 이미지 URL
       summary TEXT,                       -- 도서 소개 및 줄거리 요약
+      ranking INTEGER,                    -- 베스트셀러 순위
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `, (err) => {
@@ -176,6 +177,17 @@ db.serialize(() => {
       }
     } else {
       console.log('Migrated: summary column added to existing books database.');
+    }
+  });
+
+  // Alter table to add ranking column if it doesn't exist (migration for existing db)
+  db.run(`ALTER TABLE books ADD COLUMN ranking INTEGER`, (alterErr) => {
+    if (alterErr) {
+      if (!alterErr.message.includes('duplicate column name')) {
+        console.log('Altering database (ranking):', alterErr.message);
+      }
+    } else {
+      console.log('Migrated: ranking column added to existing books database.');
     }
   });
 
