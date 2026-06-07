@@ -15,7 +15,11 @@ const state = {
   token: localStorage.getItem('auth_token') || '',
   favorites: [],
   folders: [],
-  readBooks: JSON.parse(localStorage.getItem('read_books') || '[]')
+  readBooks: JSON.parse(localStorage.getItem('read_books') || '[]'),
+  selectedBookIdForFavorite: null,
+  folderFormMode: null, // 'create_fav', 'create_read', 'edit'
+  folderFormTargetId: null, // folder id for edit, or parent root id for create
+  confirmCallback: null
 };
 
 // DOM Elements
@@ -57,6 +61,34 @@ const authTabs = document.querySelectorAll('.auth-tab');
 const authErrorMsg = document.getElementById('auth-error-msg');
 const loginForm = document.getElementById('login-form');
 const registerForm = document.getElementById('register-form');
+
+// Folder Selection Modal DOM Elements
+const folderSelectModal = document.getElementById('folder-select-modal');
+const btnCloseFolderModal = document.getElementById('btn-close-folder-modal');
+const folderSelectList = document.getElementById('folder-select-list');
+const quickFolderInput = document.getElementById('quick-folder-input');
+const btnQuickCreateFolder = document.getElementById('btn-quick-create-folder');
+const folderRemoveActionContainer = document.getElementById('folder-remove-action-container');
+const btnRemoveFavoriteModal = document.getElementById('btn-remove-favorite-modal');
+
+// Folder Form Modal DOM Elements
+const folderFormModal = document.getElementById('folder-form-modal');
+const btnCloseFolderFormModal = document.getElementById('btn-close-folder-form-modal');
+const folderFormIcon = document.getElementById('folder-form-icon');
+const folderFormTitle = document.getElementById('folder-form-title');
+const folderFormSubtitle = document.getElementById('folder-form-subtitle');
+const folderFormInput = document.getElementById('folder-form-input');
+const folderFormError = document.getElementById('folder-form-error');
+const btnCancelFolderForm = document.getElementById('btn-cancel-folder-form');
+const btnSubmitFolderForm = document.getElementById('btn-submit-folder-form');
+
+// Confirmation Modal DOM Elements
+const confirmModal = document.getElementById('confirm-modal');
+const btnCloseConfirmModal = document.getElementById('btn-close-confirm-modal');
+const confirmTitle = document.getElementById('confirm-title');
+const confirmMessage = document.getElementById('confirm-message');
+const btnCancelConfirm = document.getElementById('btn-cancel-confirm');
+const btnSubmitConfirm = document.getElementById('btn-submit-confirm');
 
 // Initialize App
 document.addEventListener('DOMContentLoaded', async () => {
@@ -194,9 +226,81 @@ function setupEventListeners() {
     }
   });
 
+  // Folder Select Modal handlers
+  btnCloseFolderModal.addEventListener('click', closeFolderSelectModal);
+  folderSelectModal.addEventListener('click', (e) => {
+    if (e.target === folderSelectModal) closeFolderSelectModal();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && folderSelectModal.classList.contains('active')) {
+      closeFolderSelectModal();
+    }
+  });
+
+  // Quick folder creation inside modal
+  btnQuickCreateFolder.addEventListener('click', handleQuickCreateFolder);
+  quickFolderInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleQuickCreateFolder();
+    }
+  });
+
+  // Remove favorite from all folders inside modal
+  btnRemoveFavoriteModal.addEventListener('click', () => {
+    if (state.selectedBookIdForFavorite) {
+      handleRemoveAllFavorites(state.selectedBookIdForFavorite);
+    }
+  });
+
+  // Folder Form Modal (Create / Rename) handlers
+  btnCloseFolderFormModal.addEventListener('click', closeFolderFormModal);
+  btnCancelFolderForm.addEventListener('click', closeFolderFormModal);
+  folderFormModal.addEventListener('click', (e) => {
+    if (e.target === folderFormModal) closeFolderFormModal();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && folderFormModal.classList.contains('active')) {
+      closeFolderFormModal();
+    }
+  });
+
+  // Submit folder creation / rename
+  btnSubmitFolderForm.addEventListener('click', handleFolderFormSubmit);
+  folderFormInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleFolderFormSubmit();
+    }
+  });
+
+  // Confirmation Modal handlers
+  btnCloseConfirmModal.addEventListener('click', closeConfirmModal);
+  btnCancelConfirm.addEventListener('click', closeConfirmModal);
+  confirmModal.addEventListener('click', (e) => {
+    if (e.target === confirmModal) closeConfirmModal();
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && confirmModal.classList.contains('active')) {
+      closeConfirmModal();
+    }
+  });
+
+  // Submit confirmation action
+  btnSubmitConfirm.addEventListener('click', () => {
+    if (typeof state.confirmCallback === 'function') {
+      state.confirmCallback();
+    }
+    closeConfirmModal();
+  });
+
   // Favorites Drawer Toggle
   btnToggleFavoritesDrawer.addEventListener('click', () => {
     favoritesDrawer.classList.toggle('open');
+    const mainEl = document.querySelector('.main-content');
+    if (mainEl) {
+      mainEl.classList.toggle('favorites-open', favoritesDrawer.classList.contains('open'));
+    }
     if (favoritesDrawer.classList.contains('open') && state.user) {
       fetchFavoritesAndFolders();
     }
@@ -204,6 +308,10 @@ function setupEventListeners() {
 
   btnCloseDrawer.addEventListener('click', () => {
     favoritesDrawer.classList.remove('open');
+    const mainEl = document.querySelector('.main-content');
+    if (mainEl) {
+      mainEl.classList.remove('favorites-open');
+    }
   });
 
   // Show Login Modal — from drawer login prompt
@@ -751,10 +859,10 @@ function renderBooksList(books) {
 
   // Star favorite toggle click handler
   booksListContainer.querySelectorAll('.book-favorite-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const bookId = btn.dataset.id;
-      await handleToggleFavorite(bookId);
+      openFolderSelectModal(bookId);
     });
   });
 
@@ -960,9 +1068,9 @@ async function openBookDetail(id) {
     const modalFavBtn = modalContentArea.querySelector('.modal-fav-btn');
     const modalReadBtn = modalContentArea.querySelector('.modal-read-btn');
     
-    modalFavBtn.addEventListener('click', async () => {
+    modalFavBtn.addEventListener('click', () => {
       const bookId = modalFavBtn.dataset.id;
-      await handleToggleFavorite(bookId);
+      openFolderSelectModal(bookId);
     });
 
     modalReadBtn.addEventListener('click', async () => {
@@ -984,6 +1092,339 @@ async function openBookDetail(id) {
 // Close detail modal
 function closeModal() {
   bookDetailModal.classList.remove('active');
+}
+
+// Folder Selection Modal Client Logic
+function openFolderSelectModal(bookId) {
+  if (!state.user) {
+    showAuthModal();
+    return;
+  }
+
+  state.selectedBookIdForFavorite = parseInt(bookId);
+  
+  // Clear input
+  quickFolderInput.value = '';
+  
+  // Render the folder select items
+  renderFolderSelectOptions();
+  
+  folderSelectModal.classList.add('active');
+}
+
+function closeFolderSelectModal() {
+  folderSelectModal.classList.remove('active');
+  state.selectedBookIdForFavorite = null;
+}
+
+// Folder Form Modal (Create / Rename) Client Logic
+function openFolderFormModal(mode, targetId, currentName = '') {
+  state.folderFormMode = mode;
+  state.folderFormTargetId = targetId;
+  
+  // Reset input and error
+  folderFormInput.value = currentName;
+  folderFormError.classList.add('hidden');
+  folderFormError.textContent = '';
+  
+  // Customize modal based on mode
+  if (mode === 'create_fav') {
+    folderFormIcon.className = 'fa-solid fa-folder-plus folder-form-icon';
+    folderFormTitle.textContent = '즐겨찾기 폴더 추가';
+    folderFormSubtitle.textContent = '즐겨찾기 아래에 생성할 폴더 이름을 입력해 주세요.';
+  } else if (mode === 'create_read') {
+    folderFormIcon.className = 'fa-solid fa-folder-plus folder-form-icon';
+    folderFormTitle.textContent = '독서 완료 폴더 추가';
+    folderFormSubtitle.textContent = '독서 완료 아래에 생성할 폴더 이름을 입력해 주세요.';
+  } else if (mode === 'edit') {
+    folderFormIcon.className = 'fa-solid fa-pen-to-square folder-form-icon';
+    folderFormTitle.textContent = '폴더 이름 수정';
+    folderFormSubtitle.textContent = '변경할 폴더 이름을 입력해 주세요.';
+  }
+  
+  folderFormModal.classList.add('active');
+  setTimeout(() => folderFormInput.focus(), 150);
+}
+
+function closeFolderFormModal() {
+  folderFormModal.classList.remove('active');
+  state.folderFormMode = null;
+  state.folderFormTargetId = null;
+}
+
+async function handleFolderFormSubmit() {
+  const folderName = folderFormInput.value.trim();
+  if (!folderName) {
+    showFolderFormError('폴더 이름을 입력해 주세요.');
+    return;
+  }
+  
+  try {
+    if (state.folderFormMode === 'create_fav' || state.folderFormMode === 'create_read') {
+      const parentId = state.folderFormTargetId;
+      const res = await fetch('/api/favorites/folders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.token}`
+        },
+        body: JSON.stringify({ name: folderName, parent_id: parentId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '폴더 생성 실패');
+      
+    } else if (state.folderFormMode === 'edit') {
+      const folderId = state.folderFormTargetId;
+      const res = await fetch(`/api/favorites/folders/${folderId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.token}`
+        },
+        body: JSON.stringify({ name: folderName })
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || '폴더 수정 실패');
+      }
+    }
+    
+    // Refresh favorites drawer data and close modal
+    await fetchFavoritesAndFolders();
+    closeFolderFormModal();
+  } catch (err) {
+    showFolderFormError(err.message);
+  }
+}
+
+function showFolderFormError(msg) {
+  folderFormError.textContent = msg;
+  folderFormError.classList.remove('hidden');
+}
+
+// Confirmation Modal Client Logic
+function openConfirmModal(title, message, callback) {
+  confirmTitle.textContent = title;
+  confirmMessage.innerHTML = message;
+  state.confirmCallback = callback;
+
+  if (callback) {
+    // Destructive confirm mode: show "취소" + "삭제" buttons
+    btnCancelConfirm.style.display = '';
+    btnSubmitConfirm.textContent = '삭제';
+    btnSubmitConfirm.className = 'btn-danger';
+  } else {
+    // Info / error mode: hide cancel, show single "확인" button
+    btnCancelConfirm.style.display = 'none';
+    btnSubmitConfirm.textContent = '확인';
+    btnSubmitConfirm.className = 'btn-primary';
+  }
+
+  confirmModal.classList.add('active');
+}
+
+function closeConfirmModal() {
+  confirmModal.classList.remove('active');
+  state.confirmCallback = null;
+}
+
+// ── Toast Notification ──────────────────────────────────────────────────────
+// type: 'success' | 'error' | 'info'
+function showToast(message, type = 'info', duration = 3000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+
+  const icons = {
+    success: 'fa-circle-check',
+    error:   'fa-circle-exclamation',
+    info:    'fa-circle-info'
+  };
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <i class="fa-solid ${icons[type] || icons.info} toast-icon"></i>
+    <span class="toast-msg">${message}</span>
+  `;
+
+  container.appendChild(toast);
+
+  // Auto-remove with fade-out
+  const removeToast = () => {
+    toast.classList.add('toast-out');
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  };
+
+  const timer = setTimeout(removeToast, duration);
+
+  // Click to dismiss early
+  toast.addEventListener('click', () => {
+    clearTimeout(timer);
+    removeToast();
+  });
+}
+// ────────────────────────────────────────────────────────────────────────────
+
+function renderFolderSelectOptions() {
+  const favRoot = state.folders.find(f => f.name === '즐겨찾기' && f.parent_id === null);
+  if (!favRoot) {
+    folderSelectList.innerHTML = '<div class="error-text">폴더 정보를 불러올 수 없습니다.</div>';
+    return;
+  }
+  
+  const favSubfolders = state.folders.filter(f => f.parent_id === favRoot.id);
+  
+  // Find folders where this book is currently favorited
+  const currentBookFavs = state.favorites.filter(f => f.book_id === state.selectedBookIdForFavorite);
+  const currentFolderIds = currentBookFavs.map(f => f.category_id);
+  const isAlreadyFav = currentBookFavs.length > 0;
+  
+  if (isAlreadyFav) {
+    folderRemoveActionContainer.classList.remove('hidden');
+  } else {
+    folderRemoveActionContainer.classList.add('hidden');
+  }
+  
+  if (favSubfolders.length === 0) {
+    folderSelectList.innerHTML = '<div class="empty-state" style="padding: 1rem 0;"><p style="font-size:0.8rem;">생성된 즐겨찾기 폴더가 없습니다.</p></div>';
+    return;
+  }
+  
+  let html = '';
+  favSubfolders.forEach(folder => {
+    const isSelected = currentFolderIds.includes(folder.id);
+    const selectedClass = isSelected ? 'selected' : '';
+    const checkIcon = isSelected ? '<i class="fa-solid fa-circle-check folder-item-check"></i>' : '';
+    
+    html += `
+      <button class="folder-select-item ${selectedClass}" data-folder-id="${folder.id}">
+        <div class="folder-item-left">
+          <i class="fa-solid ${isSelected ? 'fa-folder-open' : 'fa-folder'}"></i>
+          <span class="folder-item-name" title="${folder.name}">${folder.name}</span>
+        </div>
+        ${checkIcon}
+      </button>
+    `;
+  });
+  
+  folderSelectList.innerHTML = html;
+  
+  // Bind folder select click handlers
+  folderSelectList.querySelectorAll('.folder-select-item').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const folderId = parseInt(btn.dataset.folderId);
+      await handleFolderSelectAction(state.selectedBookIdForFavorite, folderId);
+    });
+  });
+}
+
+async function handleFolderSelectAction(bookId, folderId) {
+  const parsedBookId = parseInt(bookId);
+  const currentBookFavs = state.favorites.filter(f => f.book_id === parsedBookId);
+  const isAlreadyInThisFolder = currentBookFavs.some(f => f.category_id === folderId);
+  
+  try {
+    if (isAlreadyInThisFolder) {
+      // Remove from this folder
+      const res = await fetch(`/api/favorites/${bookId}?category_id=${folderId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${state.token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '즐겨찾기 삭제 실패');
+    } else if (currentBookFavs.length > 0) {
+      // Move to this folder
+      const sourceCategoryId = currentBookFavs[0].category_id;
+      const res = await fetch(`/api/favorites/${bookId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.token}`
+        },
+        body: JSON.stringify({
+          category_id: folderId,
+          source_category_id: sourceCategoryId
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '즐겨찾기 이동 실패');
+    } else {
+      // Add new favorite in this folder
+      const res = await fetch('/api/favorites', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.token}`
+        },
+        body: JSON.stringify({
+          book_id: parsedBookId,
+          category_id: folderId
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '즐겨찾기 추가 실패');
+    }
+    
+    // Refresh favorites data and close modal
+    await fetchFavoritesAndFolders();
+    syncBookUIState(bookId);
+    closeFolderSelectModal();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function handleRemoveAllFavorites(bookId) {
+  try {
+    const res = await fetch(`/api/favorites/${bookId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '즐겨찾기 삭제 실패');
+    
+    await fetchFavoritesAndFolders();
+    syncBookUIState(bookId);
+    closeFolderSelectModal();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function handleQuickCreateFolder() {
+  const folderName = quickFolderInput.value.trim();
+  if (!folderName) {
+    alert('폴더 이름을 입력하세요.');
+    return;
+  }
+  
+  // Find '즐겨찾기' root folder
+  const favRoot = state.folders.find(f => f.name === '즐겨찾기' && f.parent_id === null);
+  if (!favRoot) return;
+  
+  try {
+    const res = await fetch('/api/favorites/folders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.token}`
+      },
+      body: JSON.stringify({ name: folderName, parent_id: favRoot.id })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '폴더 생성 실패');
+    
+    // Refresh folder list data
+    await fetchFavoritesAndFolders();
+    
+    // Re-render select options
+    renderFolderSelectOptions();
+    
+    // Clear input
+    quickFolderInput.value = '';
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // ====================================================
@@ -1240,32 +1681,15 @@ function renderFavoritesTree() {
 function setupFavoritesTreeEvents() {
   // Add folder buttons in each root header
   favoritesTreeContainer.querySelectorAll('.btn-add-folder').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const rootType = btn.dataset.root; // 'fav' or 'read'
-      const folderName = prompt('새 폴더 이름을 입력하세요:');
-      if (!folderName || !folderName.trim()) return;
-
-      // Find parent root id
       const rootName = rootType === 'fav' ? '즐겨찾기' : '독서 완료';
       const rootFolder = state.folders.find(f => f.name === rootName && f.parent_id === null);
       if (!rootFolder) return;
 
-      try {
-        const res = await fetch('/api/favorites/folders', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${state.token}`
-          },
-          body: JSON.stringify({ name: folderName.trim(), parent_id: rootFolder.id })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '폴더 생성 실패');
-        fetchFavoritesAndFolders();
-      } catch (err) {
-        alert(err.message);
-      }
+      const mode = rootType === 'fav' ? 'create_fav' : 'create_read';
+      openFolderFormModal(mode, rootFolder.id);
     });
   });
 
@@ -1282,55 +1706,44 @@ function setupFavoritesTreeEvents() {
 
   // Edit folder name
   favoritesTreeContainer.querySelectorAll('.edit-folder').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const folderId = btn.dataset.id;
       const folder = state.folders.find(f => f.id === parseInt(folderId));
       if (!folder) return;
       
-      const newName = prompt('폴더 이름을 입력하세요:', folder.name);
-      if (!newName || !newName.trim() || newName.trim() === folder.name) return;
-      
-      try {
-        const res = await fetch(`/api/favorites/folders/${folderId}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${state.token}`
-          },
-          body: JSON.stringify({ name: newName.trim() })
-        });
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || '폴더 수정 실패');
-        }
-        fetchFavoritesAndFolders();
-      } catch (err) {
-        alert(err.message);
-      }
+      openFolderFormModal('edit', folder.id, folder.name);
     });
   });
 
   // Delete folder
   favoritesTreeContainer.querySelectorAll('.delete-folder').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const folderId = btn.dataset.id;
-      if (!confirm('정말 이 폴더를 삭제하시겠습니까? (도서들은 미분류로 이동됩니다)')) return;
-      
-      try {
-        const res = await fetch(`/api/favorites/folders/${folderId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${state.token}` }
-        });
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || '폴더 삭제 실패');
+      const folder = state.folders.find(f => f.id === parseInt(folderId));
+      const folderName = folder ? `'${folder.name}'` : '이 폴더';
+
+      openConfirmModal(
+        '폴더 삭제',
+        `${folderName} 폴더를 삭제하시겠습니까?<br><span style="color: var(--text-muted); font-size: 0.82rem;">폴더 안의 도서들은 '미분류'로 이동됩니다.</span>`,
+        async () => {
+          try {
+            const res = await fetch(`/api/favorites/folders/${folderId}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${state.token}` }
+            });
+            if (!res.ok) {
+              const data = await res.json();
+              throw new Error(data.error || '폴더 삭제 실패');
+            }
+            await fetchFavoritesAndFolders();
+            showToast(`${folderName} 폴더가 삭제되었습니다.`, 'success');
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
         }
-        fetchFavoritesAndFolders();
-      } catch (err) {
-        alert(err.message);
-      }
+      );
     });
   });
 

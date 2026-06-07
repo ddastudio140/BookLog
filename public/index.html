@@ -259,12 +259,89 @@
       </div>
     </div>
 
+    <!-- Folder Selection Modal -->
+    <div class="modal-overlay" id="folder-select-modal">
+      <div class="modal-card folder-select-card">
+        <button class="modal-close-btn" id="btn-close-folder-modal"><i class="fa-solid fa-xmark"></i></button>
+        
+        <div class="folder-select-header">
+          <i class="fa-solid fa-star folder-select-icon"></i>
+          <h3>즐겨찾기 폴더 선택</h3>
+        </div>
+        <p class="folder-select-subtitle">이 도서를 저장할 즐겨찾기 폴더를 선택하세요.</p>
+        
+        <!-- Folder list container -->
+        <div class="folder-select-list" id="folder-select-list">
+          <!-- Dynamically populated -->
+        </div>
+
+        <!-- Quick create folder -->
+        <div class="folder-quick-create">
+          <input type="text" id="quick-folder-input" placeholder="새 폴더 이름 입력..." maxlength="15">
+          <button id="btn-quick-create-folder" class="btn-primary-sm">
+            <i class="fa-solid fa-folder-plus"></i> 추가
+          </button>
+        </div>
+
+        <!-- Remove favorite option -->
+        <div class="folder-select-actions hidden" id="folder-remove-action-container">
+          <button class="btn-remove-favorite" id="btn-remove-favorite-modal">
+            <i class="fa-solid fa-trash-can"></i> 즐겨찾기 해제 (모든 폴더에서 제거)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Folder Form Modal (Create / Rename) -->
+    <div class="modal-overlay" id="folder-form-modal">
+      <div class="modal-card folder-form-card">
+        <button class="modal-close-btn" id="btn-close-folder-form-modal"><i class="fa-solid fa-xmark"></i></button>
+        
+        <div class="folder-form-header">
+          <i class="fa-solid fa-folder-plus folder-form-icon" id="folder-form-icon"></i>
+          <h3 id="folder-form-title">폴더 추가</h3>
+        </div>
+        <p class="folder-form-subtitle" id="folder-form-subtitle">생성할 폴더 이름을 입력해 주세요.</p>
+        
+        <div class="folder-form-body">
+          <input type="text" id="folder-form-input" placeholder="폴더 이름을 입력하세요" maxlength="15" autocomplete="off">
+          <div class="folder-form-error hidden" id="folder-form-error"></div>
+        </div>
+
+        <div class="folder-form-actions">
+          <button class="btn-secondary" id="btn-cancel-folder-form">취소</button>
+          <button class="btn-primary" id="btn-submit-folder-form">확인</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirmation Modal (Delete / Confirm Action) -->
+    <div class="modal-overlay" id="confirm-modal">
+      <div class="modal-card confirm-card">
+        <button class="modal-close-btn" id="btn-close-confirm-modal"><i class="fa-solid fa-xmark"></i></button>
+        
+        <div class="confirm-header">
+          <i class="fa-solid fa-triangle-exclamation confirm-icon"></i>
+          <h3 id="confirm-title">폴더 삭제</h3>
+        </div>
+        <p class="confirm-message" id="confirm-message">정말 이 폴더를 삭제하시겠습니까?<br>폴더 안의 도서들은 '미분류'로 이동됩니다.</p>
+        
+        <div class="confirm-actions">
+          <button class="btn-secondary" id="btn-cancel-confirm">취소</button>
+          <button class="btn-danger" id="btn-submit-confirm">삭제</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Footer -->
     <footer class="app-footer">
       <p>&copy; 2026 사서의 추천 도서. All rights reserved. 본 서비스는 도서관 사서 및 전국 대학 추천도서 데이터를 바탕으로 제공됩니다.</p>
     </footer>
 
   </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container"></div>
 
   <script src="app.js"></script>
 </body>
